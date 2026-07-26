@@ -11,7 +11,12 @@ Your goal is to:
 - Evaluate what your system gets right and wrong
 - Reflect on how this mirrors real world AI recommenders
 
-Replace this paragraph with your own summary of what your version does.
+The original project is a deterministic, content-based recommender over a
+20-song fictional catalog. The applied-AI extension is being built
+incrementally around that trusted scoring core. Its first completed foundation
+adds strict runtime contracts and a shared `RecommendationService`, so the CLI,
+future Streamlit UI, AI agent, and evaluation harness all use the same validated
+application path.
 
 ---
 
@@ -28,7 +33,9 @@ about other users.
 - `energy`, `acousticness`, `valence`, `danceability` — numeric targets on a 0–1 scale
 - `tempo` — a target in **BPM** (normalized to 0–1 internally over a 50–200 range)
 
-Every field is optional; a missing field simply contributes 0.
+Inside the legacy scorer, every field is optional and a missing field
+contributes 0. The public `RecommendationRequest` now requires at least one
+preference so an empty request cannot silently return arbitrary catalog order.
 
 **Song features used:** genre, mood, energy, acousticness, valence, danceability, tempo.
 **Excluded (and why):** `artist` (a sparse, collaborative-style signal),
@@ -86,7 +93,24 @@ song and returns `(score, reasons)`. `recommend_songs` is *global* — it scores
 every song, sorts by score descending, breaks ties by `id`, and returns the
 top-k. (Stretch: enforce genre diversity within the top-k.)
 
-### Diagram
+### Validated service boundary
+
+The CLI no longer calls the scorer directly. Its current path is:
+
+```text
+RecommendationRequest
+    → RecommendationService
+    → original recommend_songs ranking
+    → RecommendationResult
+```
+
+Pydantic contracts reject empty requests, unknown fields, invalid numeric
+ranges, NaN/infinity, boolean values disguised as numbers, duplicate catalog
+IDs, and malformed tracks. The service returns both the unchanged raw score and
+a normalized **match strength**. Match strength is a request-relative fit score,
+not a probability or statistical confidence.
+
+### Original scoring diagram
 
 ```mermaid
 flowchart TD
@@ -136,6 +160,16 @@ flowchart TD
     FAM -.-> MOOD
 ```
 
+### Applied AI target architecture
+
+The implementation roadmap is captured in the canonical
+[Mermaid source](diagrams/architecture.mmd). It will be kept synchronized with
+the code as each feature is implemented. A rendered
+[PNG preview](assets/architecture.png) is included for convenience; the Mermaid
+file is the authoritative submission artifact.
+
+![Explainable AI Music Concierge architecture](assets/architecture.png)
+
 ### Potential biases and risks
 
 - **Filter-bubble / genre lock-in.** Content-based scoring with a heavy genre
@@ -166,34 +200,37 @@ flowchart TD
 
 ### Setup
 
-1. Create a virtual environment (optional but recommended):
+1. Create and activate a virtual environment:
 
    ```bash
-   python -m venv .venv
+   python3 -m venv .venv
    source .venv/bin/activate      # Mac or Linux
    .venv\Scripts\activate         # Windows
+   ```
 
-2. Install dependencies
+2. Install dependencies:
 
-```bash
-pip install -r requirements.txt
-```
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 3. Run the app:
 
-```bash
-python -m src.main
-```
+   ```bash
+   python3 -m src.main
+   ```
 
 ### Running Tests
 
-Run the starter tests with:
+Run all tests with:
 
 ```bash
-pytest
+python3 -m pytest
 ```
 
-You can add more tests in `tests/test_recommender.py`.
+The current suite contains 21 tests covering the original scorer, validated
+contracts, compatibility, normalization, malformed input, catalog integrity,
+and non-mutation.
 
 ---
 
@@ -202,7 +239,7 @@ You can add more tests in `tests/test_recommender.py`.
 Running the app with the built-in "focus / study" taste profile:
 
 ```bash
-python -m src.main
+python3 -m src.main
 ```
 
 produces:
@@ -210,10 +247,11 @@ produces:
 ```
 🎵  Music Recommender — your top picks
 
-Taste profile: genre=lofi, mood=chill, energy=0.4, acousticness=0.8, valence=0.55, danceability=0.4, tempo=78
+Taste profile: genre=lofi, mood=chill, energy=0.4, acousticness=0.8, valence=0.55, danceability=0.4, tempo_bpm=78.0
+Operating mode: local
 ----------------------------------------------------------------
 1. Midnight Coding — LoRoom  [lofi · chill]
-   Score: 7.37
+   Raw score: 7.37  ·  Match strength: 98%
    Why:
      • genre match (lofi) +4.00
      • mood match (chill) +1.50
@@ -224,7 +262,7 @@ Taste profile: genre=lofi, mood=chill, energy=0.4, acousticness=0.8, valence=0.5
      • tempo fit (target 78 bpm, song 78 bpm) +0.30
 ----------------------------------------------------------------
 2. Library Rain — Paper Lanterns  [lofi · chill]
-   Score: 7.35
+   Raw score: 7.35  ·  Match strength: 98%
    Why:
      • genre match (lofi) +4.00
      • mood match (chill) +1.50
@@ -235,7 +273,7 @@ Taste profile: genre=lofi, mood=chill, energy=0.4, acousticness=0.8, valence=0.5
      • tempo fit (target 78 bpm, song 72 bpm) +0.29
 ----------------------------------------------------------------
 3. Focus Flow — LoRoom  [lofi · focused]
-   Score: 6.64
+   Raw score: 6.64  ·  Match strength: 89%
    Why:
      • genre match (lofi) +4.00
      • mood cousin of chill (focused) +0.75
@@ -246,7 +284,7 @@ Taste profile: genre=lofi, mood=chill, energy=0.4, acousticness=0.8, valence=0.5
      • tempo fit (target 78 bpm, song 80 bpm) +0.30
 ----------------------------------------------------------------
 4. Spacewalk Thoughts — Orbit Bloom  [ambient · chill]
-   Score: 5.31
+   Raw score: 5.31  ·  Match strength: 71%
    Why:
      • genre cousin of lofi (ambient) +2.00
      • mood match (chill) +1.50
@@ -257,7 +295,7 @@ Taste profile: genre=lofi, mood=chill, energy=0.4, acousticness=0.8, valence=0.5
      • tempo fit (target 78 bpm, song 60 bpm) +0.26
 ----------------------------------------------------------------
 5. Coffee Shop Stories — Slow Stereo  [jazz · relaxed]
-   Score: 4.55
+   Raw score: 4.55  ·  Match strength: 61%
    Why:
      • genre cousin of lofi (jazz) +2.00
      • mood cousin of chill (relaxed) +0.75
@@ -403,6 +441,4 @@ Write 1 to 2 paragraphs here about what you learned:
 
 - about how recommenders turn data into predictions
 - about where bias or unfairness could show up in systems like this
-
-
 
