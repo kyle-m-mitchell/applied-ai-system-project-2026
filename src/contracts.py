@@ -116,12 +116,56 @@ class CatalogTrack(ContractModel):
     valence: float = Field(ge=0.0, le=1.0)
     danceability: float = Field(ge=0.0, le=1.0)
     acousticness: float = Field(ge=0.0, le=1.0)
+    description: str = Field(min_length=20, max_length=500)
+    tags: tuple[str, ...] = Field(min_length=2, max_length=12)
+    contexts: tuple[str, ...] = Field(min_length=2, max_length=12)
+    instruments: tuple[str, ...] = Field(min_length=1, max_length=12)
+    instrumental: bool
+    explicit: bool
+    era: str = Field(pattern=r"^(?:19|20)\d0s$")
 
     @field_validator("genre", "mood", mode="after")
     @classmethod
     def normalize_category(cls, value: str) -> str:
         """Store matching categories in one canonical form."""
         return value.lower()
+
+    @field_validator("tags", "contexts", "instruments", mode="before")
+    @classmethod
+    def normalize_metadata_values(cls, value: object) -> tuple[str, ...]:
+        """Require nonempty, unique metadata terms in a canonical form."""
+        if isinstance(value, (str, bytes)) or value is None:
+            raise ValueError("metadata collections must be a sequence of strings")
+
+        try:
+            raw_values = tuple(value)  # type: ignore[arg-type]
+        except TypeError as exc:
+            raise ValueError(
+                "metadata collections must be a sequence of strings"
+            ) from exc
+
+        normalized: list[str] = []
+        for item in raw_values:
+            if not isinstance(item, str):
+                raise ValueError("metadata collection items must be strings")
+            term = " ".join(item.split()).lower()
+            if not term:
+                raise ValueError("metadata collection items cannot be empty")
+            if len(term) > 80:
+                raise ValueError("metadata collection items cannot exceed 80 characters")
+            normalized.append(term)
+
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("metadata collections cannot contain duplicate values")
+        return tuple(normalized)
+
+    @field_validator("instrumental", "explicit", mode="before")
+    @classmethod
+    def require_real_booleans(cls, value: object) -> object:
+        """Reject truthy strings and integers at the validated service boundary."""
+        if not isinstance(value, bool):
+            raise ValueError("catalog boolean fields must be true booleans")
+        return value
 
     @field_validator("id", *NUMERIC_FIELDS, mode="before")
     @classmethod

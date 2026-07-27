@@ -16,7 +16,15 @@ The original project is a deterministic, content-based recommender over a
 incrementally around that trusted scoring core. Its first completed foundation
 adds strict runtime contracts and a shared `RecommendationService`, so the CLI,
 future Streamlit UI, AI agent, and evaluation harness all use the same validated
-application path.
+application path. Feature 2 expands the authoritative catalog to **200 fictional
+tracks across 20 evenly represented genres** and adds retrieval-ready
+descriptions, tags, contexts, instruments, content flags, and era metadata. The
+original 20 records remain preserved and regression-tested.
+
+For the complete research, decisions, roadmap, architecture status, teaching
+notes, and new-chat recovery prompt, see the
+[Project Handbook](docs/PROJECT_HANDBOOK.md). Dataset provenance and review are
+documented in the [Catalog Data Card](docs/CATALOG_DATA_CARD.md).
 
 ---
 
@@ -37,9 +45,10 @@ Inside the legacy scorer, every field is optional and a missing field
 contributes 0. The public `RecommendationRequest` now requires at least one
 preference so an empty request cannot silently return arbitrary catalog order.
 
-**Song features used:** genre, mood, energy, acousticness, valence, danceability, tempo.
-**Excluded (and why):** `artist` (a sparse, collaborative-style signal),
-`title` (free text), `id` (identifier).
+**Song features currently scored:** genre, mood, energy, acousticness, valence,
+danceability, tempo. Rich text metadata is validated and ready for the next RAG
+phase, but is not yet included in the deterministic score. That separation gives
+us a clean baseline for measuring whether retrieval improves behavior.
 
 ### Algorithm recipe
 
@@ -106,8 +115,9 @@ RecommendationRequest
 
 Pydantic contracts reject empty requests, unknown fields, invalid numeric
 ranges, NaN/infinity, boolean values disguised as numbers, duplicate catalog
-IDs, and malformed tracks. The service returns both the unchanged raw score and
-a normalized **match strength**. Match strength is a request-relative fit score,
+IDs or normalized title/artist pairs, schema drift, malformed metadata, and
+malformed tracks. The service returns both the unchanged raw score and a
+normalized **match strength**. Match strength is a request-relative fit score,
 not a probability or statistical confidence.
 
 ### Original scoring diagram
@@ -188,9 +198,10 @@ file is the authoritative submission artifact.
 - **Symmetric-closeness assumption.** `1 − abs(target − value)` penalizes
   exceeding a target exactly as much as falling short. "I want high energy" is not
   the same as "I want energy near 0.9," but the model treats them identically.
-- **Tiny catalog.** With 20 songs across 17 genres, most genres have a single
-  track, so exact-genre matches are rare and results lean on families and
-  numerics — recommendations are unstable and unrepresentative.
+- **Synthetic catalog.** The new 200-track catalog fixes representation depth for
+  software testing, but its features and descriptions are authored rather than
+  measured from audio. Embedding this metadata will make its assumptions easier
+  to retrieve, not more objective.
 
 (The model card goes deeper on these.)
 
@@ -228,9 +239,10 @@ Run all tests with:
 python3 -m pytest
 ```
 
-The current suite contains 21 tests covering the original scorer, validated
-contracts, compatibility, normalization, malformed input, catalog integrity,
-and non-mutation.
+The current suite contains 30 tests covering the original scorer, validated
+contracts, compatibility, normalization, malformed input, 200-track balance,
+legacy preservation, retrieval-metadata integrity, schema drift, new-genre
+service behavior, and non-mutation.
 
 ---
 
@@ -250,7 +262,18 @@ produces:
 Taste profile: genre=lofi, mood=chill, energy=0.4, acousticness=0.8, valence=0.55, danceability=0.4, tempo_bpm=78.0
 Operating mode: local
 ----------------------------------------------------------------
-1. Midnight Coding — LoRoom  [lofi · chill]
+1. Cloudy Bookmark — Mosslight  [lofi · chill]
+   Raw score: 7.38  ·  Match strength: 98%
+   Why:
+     • genre match (lofi) +4.00
+     • mood match (chill) +1.50
+     • energy fit (target 0.4, song 0.48) +0.46
+     • acousticness fit (target 0.8, song 0.8) +0.35
+     • valence fit (target 0.55, song 0.56) +0.45
+     • danceability fit (target 0.4, song 0.53) +0.35
+     • tempo fit (target 78 bpm, song 88 bpm) +0.28
+----------------------------------------------------------------
+2. Midnight Coding — LoRoom  [lofi · chill]
    Raw score: 7.37  ·  Match strength: 98%
    Why:
      • genre match (lofi) +4.00
@@ -261,7 +284,7 @@ Operating mode: local
      • danceability fit (target 0.4, song 0.62) +0.31
      • tempo fit (target 78 bpm, song 78 bpm) +0.30
 ----------------------------------------------------------------
-2. Library Rain — Paper Lanterns  [lofi · chill]
+3. Library Rain — Paper Lanterns  [lofi · chill]
    Raw score: 7.35  ·  Match strength: 98%
    Why:
      • genre match (lofi) +4.00
@@ -272,38 +295,27 @@ Operating mode: local
      • danceability fit (target 0.4, song 0.58) +0.33
      • tempo fit (target 78 bpm, song 72 bpm) +0.29
 ----------------------------------------------------------------
-3. Focus Flow — LoRoom  [lofi · focused]
-   Raw score: 6.64  ·  Match strength: 89%
+4. Blue Desk Lamp — Juniper Tape  [lofi · relaxed]
+   Raw score: 6.67  ·  Match strength: 89%
+   Why:
+     • genre match (lofi) +4.00
+     • mood cousin of chill (relaxed) +0.75
+     • energy fit (target 0.4, song 0.4) +0.50
+     • acousticness fit (target 0.8, song 0.72) +0.32
+     • valence fit (target 0.55, song 0.48) +0.42
+     • danceability fit (target 0.4, song 0.45) +0.38
+     • tempo fit (target 78 bpm, song 80 bpm) +0.30
+----------------------------------------------------------------
+5. Quiet Deadline — Cassette Garden  [lofi · focused]
+   Raw score: 6.65  ·  Match strength: 89%
    Why:
      • genre match (lofi) +4.00
      • mood cousin of chill (focused) +0.75
-     • energy fit (target 0.4, song 0.4) +0.50
-     • acousticness fit (target 0.8, song 0.78) +0.34
-     • valence fit (target 0.55, song 0.59) +0.43
-     • danceability fit (target 0.4, song 0.6) +0.32
-     • tempo fit (target 78 bpm, song 80 bpm) +0.30
-----------------------------------------------------------------
-4. Spacewalk Thoughts — Orbit Bloom  [ambient · chill]
-   Raw score: 5.31  ·  Match strength: 71%
-   Why:
-     • genre cousin of lofi (ambient) +2.00
-     • mood match (chill) +1.50
-     • energy fit (target 0.4, song 0.28) +0.44
-     • acousticness fit (target 0.8, song 0.92) +0.31
-     • valence fit (target 0.55, song 0.65) +0.41
-     • danceability fit (target 0.4, song 0.41) +0.40
-     • tempo fit (target 78 bpm, song 60 bpm) +0.26
-----------------------------------------------------------------
-5. Coffee Shop Stories — Slow Stereo  [jazz · relaxed]
-   Raw score: 4.55  ·  Match strength: 61%
-   Why:
-     • genre cousin of lofi (jazz) +2.00
-     • mood cousin of chill (relaxed) +0.75
-     • energy fit (target 0.4, song 0.37) +0.48
-     • acousticness fit (target 0.8, song 0.89) +0.32
-     • valence fit (target 0.55, song 0.71) +0.38
-     • danceability fit (target 0.4, song 0.54) +0.34
-     • tempo fit (target 78 bpm, song 90 bpm) +0.28
+     • energy fit (target 0.4, song 0.44) +0.48
+     • acousticness fit (target 0.8, song 0.76) +0.34
+     • valence fit (target 0.55, song 0.6) +0.43
+     • danceability fit (target 0.4, song 0.49) +0.36
+     • tempo fit (target 78 bpm, song 84 bpm) +0.29
 ----------------------------------------------------------------
 ```
 
@@ -313,11 +325,12 @@ Operating mode: local
 
 ## Experiments You Tried
 
-### Adversarial edge-case profiles
+### Historical baseline adversarial profiles
 
-I pressure-tested the scoring logic with deliberately hostile taste profiles to
-find where it produces unexpected or absurd results. Every block below is real
-output from `recommend_songs` against the 20-song catalog.
+Before the validated service and catalog expansion, I pressure-tested the
+20-song scoring baseline with deliberately hostile taste profiles. The blocks
+below are preserved as historical evidence of what failed and why the later
+changes were made; they are not claims about the current public service.
 
 **1. "Genre is decisive" is conditional — a wrong-genre song can top the list.**
 The genre weight is 3.0, but *everything except genre* sums to 5.0 (mood 1.5 +
@@ -409,36 +422,49 @@ case-insensitive matching) fixes the ranking-level failures:
   **D** (`"Lofi"`/`"Chill"`) recovers the full genre + mood match (7.07) instead
   of silently collapsing to numerics.
 
-- **Finding 2** still degrades gracefully (garbage numeric targets clamp to a 0
-  contribution, no crash) and **tempo is now scored** — but **Findings E/F**
-  remain open: an all-miss or empty profile still returns catalog order with
-  score 0.00. That's a *no-match-signal* problem, not a weights problem, and is
-  left as future work (e.g. return an explicit "no confident matches" result).
+- **Finding 2 is gone at the public boundary.** `RecommendationRequest` rejects
+  out-of-range values, booleans disguised as numbers, NaN, and infinity before
+  the scorer runs. Tempo is now scored.
+
+- **The empty-profile half of Finding 4 is gone.** The public contract requires
+  at least one real preference. An unknown but syntactically valid all-miss
+  genre can still return zero-score ID order; the planned situation policy will
+  turn that into an explicit no-match or clarification response.
 
 ---
 
 ## Limitations and Risks
 
-Summarize some limitations of your recommender.
+- The scorer strongly favors genre, which protects stated preferences but limits
+  cross-genre discovery.
+- Genre/mood families and all rich metadata encode human judgment and cultural
+  assumptions.
+- The 200 tracks are fictional and their numeric values are not measured audio
+  properties.
+- The current application does not yet understand natural language; accepting a
+  `query` before the intent/RAG feature would misrepresent its capability.
+- Match strength is not calibrated confidence, and a valid unknown genre can
+  still produce zero-score stable ID order.
+- Companion behavior, provider privacy controls, grounded output evaluation,
+  and local TF-IDF fallback are target features, not current behavior.
 
-Examples:
-
-- It only works on a tiny catalog
-- It does not understand lyrics or language
-- It might over favor one genre or mood
-
-You will go deeper on this in your model card.
+See the [Model Card](model_card.md), [Catalog Data Card](docs/CATALOG_DATA_CARD.md),
+and [Project Handbook](docs/PROJECT_HANDBOOK.md) for deeper analysis.
 
 ---
 
 ## Reflection
 
-Read and complete `model_card.md`:
+The most important engineering lesson so far is that an AI feature needs a
+trustworthy application boundary and trustworthy source data before it needs a
+language model. The original weighted scorer remains valuable because it is
+deterministic and explainable. Pydantic validation now protects inputs and
+outputs, while the balanced catalog provides enough rich evidence for us to
+measure RAG instead of merely demonstrating an API call.
 
-[**Model Card**](model_card.md)
-
-Write 1 to 2 paragraphs here about what you learned:
-
-- about how recommenders turn data into predictions
-- about where bias or unfairness could show up in systems like this
-
+The catalog expansion also makes bias easier to see. Equal genre counts improve
+test coverage, but do not make our genre families, contexts, descriptions, or
+numeric labels objective. Future retrieval could amplify those authored
+assumptions. That is why the data card separates automated integrity checks from
+pending human review, and why the final evaluator must check provenance and hard
+constraints rather than trusting fluent AI output.

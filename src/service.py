@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -43,11 +44,35 @@ class RecommendationService:
         )
         track_ids = [track.id for track in validated_catalog]
         duplicate_ids = sorted(
-            track_id for track_id in set(track_ids) if track_ids.count(track_id) > 1
+            track_id
+            for track_id, count in Counter(track_ids).items()
+            if count > 1
         )
         if duplicate_ids:
             formatted_ids = ", ".join(str(track_id) for track_id in duplicate_ids)
             raise ValueError(f"catalog contains duplicate track IDs: {formatted_ids}")
+
+        identities = [
+            (
+                " ".join(track.title.split()).casefold(),
+                " ".join(track.artist.split()).casefold(),
+            )
+            for track in validated_catalog
+        ]
+        duplicate_identities = sorted(
+            identity
+            for identity, count in Counter(identities).items()
+            if count > 1
+        )
+        if duplicate_identities:
+            formatted_tracks = ", ".join(
+                f"{title} by {artist}"
+                for title, artist in duplicate_identities
+            )
+            raise ValueError(
+                "catalog contains duplicate title/artist pairs: "
+                f"{formatted_tracks}"
+            )
 
         self._catalog = validated_catalog
         self._tracks_by_id = {track.id: track for track in validated_catalog}

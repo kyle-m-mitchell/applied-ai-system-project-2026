@@ -22,6 +22,13 @@ def make_catalog() -> list[dict]:
             "valence": 0.6,
             "danceability": 0.5,
             "acousticness": 0.9,
+            "description": "Soft tape-warmed beats for a quiet concentration session.",
+            "tags": ("lofi", "tape warmth", "soft beats"),
+            "contexts": ("studying", "reading"),
+            "instruments": ("rhodes", "soft drums"),
+            "instrumental": True,
+            "explicit": False,
+            "era": "2020s",
         },
         {
             "id": 1,
@@ -34,6 +41,13 @@ def make_catalog() -> list[dict]:
             "valence": 0.9,
             "danceability": 0.8,
             "acousticness": 0.2,
+            "description": "Bright melodic pop with an energetic city-morning pulse.",
+            "tags": ("pop", "bright", "melodic"),
+            "contexts": ("commuting", "morning"),
+            "instruments": ("synth", "drums"),
+            "instrumental": False,
+            "explicit": False,
+            "era": "2020s",
         },
     ]
 
@@ -166,6 +180,12 @@ def test_catalog_rejects_empty_duplicate_and_invalid_records():
     invalid_catalog[0]["title"] = " "
     with pytest.raises(ValidationError):
         RecommendationService(invalid_catalog)
+
+    duplicate_identity_catalog = make_catalog()
+    duplicate_identity_catalog[1]["title"] = " chill lofi loop "
+    duplicate_identity_catalog[1]["artist"] = "TEST ARTIST"
+    with pytest.raises(ValueError, match="duplicate title/artist"):
+        RecommendationService(duplicate_identity_catalog)
 
 
 def test_reasons_are_structured_values():

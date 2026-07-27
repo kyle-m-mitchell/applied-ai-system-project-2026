@@ -41,10 +41,10 @@ TEMPO_MAX_BPM = 200.0
 # Each genre/mood belongs to exactly one family.
 GENRE_FAMILIES = {
     "mellow":     {"lofi", "ambient", "jazz", "classical"},
-    "pop_elec":   {"pop", "indie pop", "synthwave", "edm"},
-    "rock_heavy": {"rock", "metal"},
+    "pop_elec":   {"pop", "indie pop", "synthwave", "edm", "house"},
+    "rock_heavy": {"rock", "metal", "punk"},
     "roots":      {"country", "folk", "blues"},
-    "groove":     {"hip hop", "r&b", "funk", "reggae"},
+    "groove":     {"hip hop", "r&b", "funk", "reggae", "soul"},
 }
 
 MOOD_FAMILIES = {
@@ -138,15 +138,61 @@ class Recommender:
         detail = "; ".join(reasons) if reasons else "no strong matches with your profile"
         return f"{song.title} scored {score:.2f}: {detail}"
 
+CATALOG_FIELDS = (
+    "id",
+    "title",
+    "artist",
+    "genre",
+    "mood",
+    "energy",
+    "tempo_bpm",
+    "valence",
+    "danceability",
+    "acousticness",
+    "description",
+    "tags",
+    "contexts",
+    "instruments",
+    "instrumental",
+    "explicit",
+    "era",
+)
+
+LIST_FIELDS = ("tags", "contexts", "instruments")
+BOOLEAN_FIELDS = ("instrumental", "explicit")
+
+
+def _parse_pipe_values(value: Optional[str], field: str) -> Tuple[str, ...]:
+    """Parse one canonical pipe-delimited metadata cell."""
+    if value is None or not value.strip():
+        raise ValueError(f"{field} cannot be empty")
+
+    values = tuple(part.strip().lower() for part in value.split("|"))
+    if any(not part for part in values):
+        raise ValueError(f"{field} contains an empty pipe-delimited value")
+    if len(values) != len(set(values)):
+        raise ValueError(f"{field} contains duplicate values")
+    return values
+
+
+def _parse_boolean(value: Optional[str], field: str) -> bool:
+    """Parse only the two canonical CSV boolean spellings."""
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise ValueError(f"{field} must be exactly 'true' or 'false'")
+
+
 def load_songs(csv_path: str) -> List[Dict]:
     """
     Loads songs from a CSV file into a list of dictionaries.
 
-    Numeric columns are converted so we can do math on them later:
-    - id                                              -> int
-    - energy, tempo_bpm, valence,
-      danceability, acousticness                      -> float
-    The remaining columns (title, artist, genre, mood) stay as strings.
+    The loader is the serialization boundary for the authoritative catalog:
+    integers and floats become numbers, pipe-delimited metadata becomes tuples,
+    and only canonical lowercase ``true``/``false`` values become booleans.
+    Header order is validated so a misspelled or silently added field cannot
+    flow into retrieval or ranking unnoticed.
 
     Required by src/main.py
     """
@@ -156,11 +202,26 @@ def load_songs(csv_path: str) -> List[Dict]:
     songs: List[Dict] = []
     with open(csv_path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
-        for row in reader:
-            for field in int_fields:
-                row[field] = int(row[field])
-            for field in float_fields:
-                row[field] = float(row[field])
+        actual_fields = tuple(reader.fieldnames or ())
+        if actual_fields != CATALOG_FIELDS:
+            raise ValueError(
+                "catalog columns must be exactly: " + ", ".join(CATALOG_FIELDS)
+            )
+
+        for line_number, row in enumerate(reader, start=2):
+            try:
+                for field in int_fields:
+                    row[field] = int(row[field])
+                for field in float_fields:
+                    row[field] = float(row[field])
+                for field in LIST_FIELDS:
+                    row[field] = _parse_pipe_values(row[field], field)
+                for field in BOOLEAN_FIELDS:
+                    row[field] = _parse_boolean(row[field], field)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"invalid catalog data on CSV line {line_number}: {exc}"
+                ) from exc
             songs.append(row)
     return songs
 

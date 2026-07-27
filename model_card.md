@@ -2,7 +2,8 @@
 
 ## 1. Model Name  
 
-**TasteTether 1.0** — a content-based music recommender simulation.
+**TasteTether 1.0** — the deterministic content-based baseline for the planned
+**Cadence** applied-AI music companion.
 
 ---
 
@@ -46,23 +47,25 @@ Every preference has exactly one song attribute it's compared against.
 
 ## 4. Data  
 
-The catalog contains **20 songs**. Each song has a title, artist, genre, mood,
-and five numeric audio features (energy, tempo, valence, danceability,
-acousticness).
+The authoritative catalog now contains **200 fictional songs across 20 genres,
+with exactly 10 songs per genre**. The original 20 records and their original
+values are preserved in the first 20 IDs and in a separate immutable legacy
+snapshot. House, soul, and punk were added to the original 17 genres.
 
-The starter file included 10 songs across 7 genres (pop, lofi, rock, ambient,
-jazz, synthwave, indie pop) and 6 moods (happy, chill, intense, relaxed, moody,
-focused). I added 10 more songs to widen the range, introducing 10 new genres
-(hip hop, classical, reggae, metal, country, edm, blues, folk, r&b, funk) and 10
-new moods (energetic, melancholy, uplifting, aggressive, nostalgic, euphoric,
-somber, hopeful, romantic, playful). The catalog now spans 17 genres and 16
-moods.
+Each record contains the original title, artist, genre, mood, and five numeric
+audio-style fields (energy, tempo, valence, danceability, acousticness). Feature
+2 adds a natural-language description, tags, listening contexts, instruments,
+instrumental and explicit flags, and a decade-style era label. These new fields
+are validated and intended to ground the future RAG retriever; the current
+deterministic score still uses only the original scoring fields.
 
-What's still missing: most genres are represented by only one or two songs, so
-the data can't show how varied a single genre really is. There are also no
-lyrics, language, release year, or artist popularity, and no information about
-listeners at all — which is exactly why a collaborative (people-like-you)
-approach isn't possible with this dataset.
+The catalog is synthetic and reproducibly generated from curated genre
+profiles. Its values are authored rather than measured from audio, so they are
+appropriate for classroom software tests but not factual music analysis. There
+are still no lyrics, language, real popularity, or listener histories, which is
+why a collaborative “people like you” approach is not possible. Full provenance,
+validation, review status, and limitations are in the
+[Catalog Data Card](docs/CATALOG_DATA_CARD.md).
 
 ---
 
@@ -93,26 +96,31 @@ makes it easy to reason about and easy to test.
 
 ## 6. Limitations and Bias
 
-**Discovered weakness — the family-size lottery.** The most serious bias is a
-filter bubble whose severity depends on *which* family a listener happens to fall
-into. Genre is weighted 4.0 specifically so an exact-genre match always outranks
-any unrelated genre, which locks the top of every list to the user's genre and
-its hand-drawn family and makes cross-genre discovery effectively impossible.
-That would be fair if every family were equally deep, but they are not: the
-20-song catalog gives *mellow* six songs and *pop_elec* five, while *rock_heavy*
-has only two (rock, metal) and 15 of the 17 genres appear exactly once. The
-result is unequal recommendation quality. A lofi (mellow) fan receives five
-coherent, high-confidence picks entirely inside their comfort zone (scores
-4.4–7.3), whereas a metal (rock_heavy) fan gets metal, then rock, and then falls
-off a cliff into unrelated genres — hip hop, pop, country — surfaced purely on
-numeric noise at scores near 2, barely a third of the exact match. Because the
-score carries no confidence signal, this filler is presented with exactly the
-same authority as a real match, so users with narrow or underrepresented tastes
-are quietly served near-random recommendations dressed up as personalized ones.
+**Discovered weakness — genre lock-in and authored categories.** Genre is
+weighted 4.0 specifically so an exact-genre match always outranks any unrelated
+genre. This protects an explicit preference but locks the top of the list into a
+hand-drawn neighborhood and makes cross-genre discovery difficult. The balanced
+catalog removes the baseline problem where most genres had only one record, but
+it does not make genre families fair or objective. Family sizes still differ,
+and assigning house to `pop_elec`, punk to `rock_heavy`, or soul to `groove`
+reflects designer judgment.
+
+The richer synthetic metadata adds a second risk: descriptions and contexts can
+encode stereotypes or overstate what a fictional track is “for.” Embeddings will
+make those labels easier to retrieve, not more factual. Automated validation can
+prove ranges, uniqueness, and schema integrity, but a person must still review
+language, cultural assumptions, and outliers. Match strength helps expose weak
+fit, but it is request-relative and must not be presented as calibrated
+confidence.
 
 ---
 
-## 7. Evaluation  
+## 7. Historical Baseline Evaluation
+
+The experiments below were recorded against the original 20-track baseline and
+are preserved because they motivated later changes. They are not current
+200-track acceptance results. The current automated catalog/service result is
+`30 passed`; a dedicated AI/RAG evaluation harness remains future work.
 
 ### Everyday profiles I tested
 
@@ -195,9 +203,9 @@ the results.
 
 ### Adversarial edge-case profiles
 
-I also ran a set of **adversarial edge-case profiles** against the full 20-song
-catalog to find where the scoring logic breaks. Each block below is real output
-from `recommend_songs`.
+I also ran a set of **adversarial edge-case profiles** against the original
+20-song catalog to find where the scoring logic breaks. Each block below is
+historical output from `recommend_songs`.
 
 **Finding 1 — "genre is decisive" holds only conditionally.** Genre is weighted
 3.0, but every other signal combined sums to 5.0 (mood 1.5 + numeric 3.5). A
@@ -268,9 +276,12 @@ profiles:
 - Genre/mood matching is now case-insensitive, closing Finding 3.
 - Tempo is now scored (target in BPM, normalized to 0–1), closing the
   never-scored gap.
-- Findings E/F (empty / all-miss profile returns catalog order at score 0.00)
-  are **still open** — that needs an explicit "no confident matches" signal
-  rather than a weight change, and is listed under Future Work.
+- Strict Pydantic request contracts now reject out-of-range/NaN/infinite values
+  and empty requests, closing Finding 2 and the empty-profile half of Finding 4
+  at the public boundary.
+- A syntactically valid but unknown all-miss genre can still return zero-score
+  ID order. That needs an explicit `no_match` situation policy rather than a
+  weight change and remains under Future Work.
 
 ---
 
@@ -278,18 +289,18 @@ profiles:
 
 My testing (Sections 6 and 7) pointed to four concrete next steps:
 
-- **Add a "no confident matches" signal.** Right now an empty or all-miss profile
-  still returns five songs at score 0.00 in catalog order (Findings E/F), which
-  looks like a real answer. The recommender should notice when nothing clears a
-  minimum bar and say so, instead of presenting filler as picks.
+- **Add a "no confident matches" signal.** Empty requests are now rejected, but
+  an unknown all-miss preference can still return zero-score ID order. The
+  recommender should notice when nothing clears a minimum bar and say so, instead
+  of presenting filler as picks.
 - **Inject genre diversity into the top-k.** To soften the filter-bubble /
   family-size lottery from Section 6, the ranker could reserve a slot or two for
   strong matches outside the user's family, trading a little genre purity for
   real discovery.
-- **Grow a bigger, deeper catalog.** With 15 of 17 genres represented by a single
-  song, results often lean on one track or its cousins. More songs per genre
-  would make within-genre ranking meaningful and cut down on the noise-filler
-  problem.
+- **Use and evaluate the new retrieval-ready catalog.** The catalog-growth step
+  is complete at 200 tracks/20 genres. The next step is a provenance-aware local
+  TF-IDF index, followed by provider embeddings behind the same interface, with
+  before/after retrieval measurements.
 - **Support smarter, more expressive preferences.** Allow directional targets
   ("at least this energetic" rather than "near this"), and learn the genre/mood
   families from the data instead of hand-drawing them, so the groupings aren't
