@@ -204,3 +204,45 @@ class RecommendationResult(ContractModel):
         if len(track_ids) != len(set(track_ids)):
             raise ValueError("recommendations contain duplicate track IDs")
         return self
+
+
+class SourceType(str, Enum):
+    """Where a retrieved piece of evidence came from.
+
+    ``CONTEXT_GUIDE`` is defined now so the retrieval interface stays stable, but
+    it is unused until curated context guides are added as a second source.
+    """
+
+    CATALOG = "catalog"
+    CONTEXT_GUIDE = "context_guide"
+
+
+class RetrievalHit(ContractModel):
+    """One track surfaced by the retriever, with the provenance that justifies it.
+
+    ``score`` is a cosine similarity in ``[0, 1]``, not a probability or a
+    calibrated confidence. Every hit records where it came from so a later
+    evaluator (and a human) can trace why it was retrieved.
+    """
+
+    source_type: SourceType
+    source_id: str = Field(min_length=1)
+    content_hash: str = Field(min_length=1)
+    fields_used: tuple[str, ...] = Field(min_length=1)
+    score: float = Field(ge=0.0, le=1.0)
+    matched_terms: tuple[str, ...] = ()
+    track: CatalogTrack
+
+
+class RetrievalResult(ContractModel):
+    """Validated response returned by a ``Retriever``.
+
+    ``index_fingerprint`` identifies the exact index the hits came from, so a
+    result can be tied back to a specific catalog content hash and retrieval
+    method version.
+    """
+
+    query: str
+    hits: tuple[RetrievalHit, ...]
+    index_fingerprint: str = Field(min_length=1)
+    filters_applied: tuple[str, ...] = ()

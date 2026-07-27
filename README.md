@@ -46,9 +46,12 @@ contributes 0. The public `RecommendationRequest` now requires at least one
 preference so an empty request cannot silently return arbitrary catalog order.
 
 **Song features currently scored:** genre, mood, energy, acousticness, valence,
-danceability, tempo. Rich text metadata is validated and ready for the next RAG
-phase, but is not yet included in the deterministic score. That separation gives
-us a clean baseline for measuring whether retrieval improves behavior.
+danceability, tempo. The deterministic score still uses only those numeric and
+categorical fields. As of Feature 3, the rich text metadata (`description`,
+`tags`, `contexts`, `instruments`) is consumed by a separate local TF-IDF
+**retriever** — see *Local retrieval (Feature 3)* below. Keeping retrieval out of
+the scoring core preserves a clean baseline for measuring whether retrieval
+improves behavior.
 
 ### Algorithm recipe
 
@@ -119,6 +122,36 @@ IDs or normalized title/artist pairs, schema drift, malformed metadata, and
 malformed tracks. The service returns both the unchanged raw score and a
 normalized **match strength**. Match strength is a request-relative fit score,
 not a probability or statistical confidence.
+
+### Local retrieval (Feature 3)
+
+The numeric scorer compares *numbers*; it cannot use a phrase like "late-night
+study beats." Feature 3 adds the **retrieval** half of RAG — with no language
+model — as a standalone component in [`src/retrieval.py`](src/retrieval.py):
+
+- **TF-IDF + cosine similarity, pure Python (no scikit-learn/NumPy).** Each
+  track's descriptor fields (`genre`, `mood`, `era`, `description`, `tags`,
+  `contexts`, `instruments`) become one retrieval document. Terms are weighted by
+  frequency in the track (TF) and rarity across the catalog (IDF), then compared
+  to a query by cosine similarity. The math is written out so it is inspectable.
+- **Provenance on every hit.** Each result records `source_type`, `source_id`,
+  `content_hash`, `fields_used`, the similarity `score`, and the `matched_terms`
+  that justified it (contracts in [`src/contracts.py`](src/contracts.py)).
+- **Hard filters before ranking.** `instrumental_only` and `exclude_explicit`
+  define the candidate set first, so a high similarity can never override a hard
+  constraint.
+- **A stable `Retriever` interface.** `TfidfRetriever` implements an abstract
+  `Retriever`, so a future provider-embedding retriever can drop in behind the
+  same `search()` method.
+
+**Honesty boundary.** The public `RecommendationRequest` still accepts *only*
+structured preferences — there is deliberately no natural-language `query` field
+yet. That entry point arrives with the input/privacy guard and intent parser in a
+later phase. The retriever is exercised directly by tests and the demo below.
+
+**Limitation by design.** TF-IDF is *lexical*, not semantic: it matches word
+forms, so `"studying"` does not match the catalog's `"study"`. Closing that gap
+is exactly the job of the planned provider-embedding retriever.
 
 ### Original scoring diagram
 
@@ -231,6 +264,15 @@ file is the authoritative submission artifact.
    python3 -m src.main
    ```
 
+4. Try local retrieval (Feature 3) — no API key or network needed:
+
+   ```bash
+   python3 scripts/retrieval_demo.py "late-night study beats to focus"
+   ```
+
+   No dependencies beyond the standard library are required for retrieval;
+   `requirements.txt` is unchanged by Feature 3.
+
 ### Running Tests
 
 Run all tests with:
@@ -239,10 +281,12 @@ Run all tests with:
 python3 -m pytest
 ```
 
-The current suite contains 30 tests covering the original scorer, validated
+The current suite contains 44 tests covering the original scorer, validated
 contracts, compatibility, normalization, malformed input, 200-track balance,
 legacy preservation, retrieval-metadata integrity, schema drift, new-genre
-service behavior, and non-mutation.
+service behavior, non-mutation, and — new in Feature 3 — TF-IDF retrieval
+relevance, provenance, hard filters, determinism, tie-breaking, no-signal
+queries, and index fingerprinting.
 
 ---
 
@@ -320,6 +364,43 @@ Operating mode: local
 ```
 
 **Screenshot or video** *(optional)*: <!-- Insert a screenshot or demo video link here -->
+
+### Retrieval before / after (Feature 3)
+
+`scripts/retrieval_demo.py` contrasts the numeric scorer with the TF-IDF
+retriever on a free-text phrase the scorer cannot represent:
+
+```bash
+python3 scripts/retrieval_demo.py "late-night study beats to focus"
+```
+
+```
+BEFORE - original numeric scorer
+  The public request accepts only structured preferences and rejects free
+  text. Placed in the only text slot (genre), the phrase matches no known
+  label, so ranking falls back to stable ID order with zero match strength:
+  #  1  Sunrise City               [pop      ] match strength 0.00
+  #  2  Midnight Coding            [lofi     ] match strength 0.00
+  #  3  Storm Runner               [rock     ] match strength 0.00
+  #  4  Library Rain               [lofi     ] match strength 0.00
+  #  5  Gym Hero                   [pop      ] match strength 0.00
+
+AFTER - TF-IDF retriever  (mode: local, index 98e85998c66b)
+  #  9  Focus Flow                 [lofi     ] similarity 0.435
+        source=catalog:9  matched: beats, study, focus, late, night
+  # 30  Blue Desk Lamp             [lofi     ] similarity 0.361
+        source=catalog:30  matched: beats, study, focus, late, night
+  # 32  Cloudy Bookmark            [lofi     ] similarity 0.359
+        source=catalog:32  matched: beats, study, focus, late, night
+  #  2  Midnight Coding            [lofi     ] similarity 0.356
+        source=catalog:2  matched: beats, study, focus, late, night
+  # 34  Dust on the Keys           [lofi     ] similarity 0.356
+        source=catalog:34  matched: beats, study, focus, late, night
+```
+
+A cross-genre phrase shows retrieval reaching matches no single-genre request
+could — `"rainy day melancholy piano"` surfaces blues, r&b, and classical tracks
+together, each with the `matched_terms` that justify it.
 
 ---
 
@@ -441,12 +522,17 @@ case-insensitive matching) fixes the ranking-level failures:
   assumptions.
 - The 200 tracks are fictional and their numeric values are not measured audio
   properties.
-- The current application does not yet understand natural language; accepting a
-  `query` before the intent/RAG feature would misrepresent its capability.
-- Match strength is not calibrated confidence, and a valid unknown genre can
-  still produce zero-score stable ID order.
-- Companion behavior, provider privacy controls, grounded output evaluation,
-  and local TF-IDF fallback are target features, not current behavior.
+- The public request path does not yet understand natural language; the Feature 3
+  retriever is a standalone component, and adding a `query` field before the
+  intent/privacy guard exists would misrepresent the application's capability.
+- Retrieval is lexical (TF-IDF), so paraphrases and word-form differences
+  (`"studying"` vs `"study"`) are missed until provider embeddings are added.
+- Match strength is not calibrated confidence, retrieval similarity is not a
+  probability, and a valid unknown genre can still produce zero-score stable ID
+  order.
+- Companion behavior, provider privacy controls, grounded output evaluation, and
+  wiring retrieval into a degraded-mode fallback are target features, not current
+  behavior.
 
 See the [Model Card](model_card.md), [Catalog Data Card](docs/CATALOG_DATA_CARD.md),
 and [Project Handbook](docs/PROJECT_HANDBOOK.md) for deeper analysis.

@@ -31,18 +31,18 @@ check first; those facts can become stale.
 
 ## Live project snapshot
 
-Last updated: **2026-07-26**
+Last updated: **2026-07-27**
 
 | Item | Current state |
 |---|---|
-| Branch and starting commit | `main` at `579e2dd` before Feature 2 work |
-| Phase | **Feature 2 technically complete; human catalog sign-off pending** |
-| Working tree | Feature 2 is uncommitted; inspect with `git status --short` |
-| Last verified regression check | `30 passed` from `.venv/bin/python -m pytest -q` |
-| Implemented | Original scorer, strict Pydantic contracts, shared service, validated CLI, 200-track retrieval-ready catalog, integrity tests, catalog data card, target Mermaid architecture |
+| Branch | `main`; Feature 3 changes are uncommitted — inspect with `git status --short` |
+| Phase | **Feature 3 (local TF-IDF retrieval) implemented and tested; human catalog sign-off still pending** |
+| Working tree | New: `src/retrieval.py`, `tests/test_retrieval.py`, `scripts/retrieval_demo.py`; edited: `src/contracts.py` and docs |
+| Last verified regression check | `44 passed` from `.venv/bin/python -m pytest -q` on 2026-07-27 |
+| Implemented | Original scorer, strict Pydantic contracts, shared service, validated CLI, 200-track retrieval-ready catalog, integrity tests, catalog data card, **local pure-Python TF-IDF retriever with provenance behind a `Retriever` interface, retrieval tests, before/after demo**, target Mermaid architecture |
 | In progress | Human review of the catalog’s representative and flagged records |
-| Not implemented yet | RAG index, natural-language intent parsing, Gemini adapter, bounded agent, companion response policy, UI, session feedback, AI event logs, evaluation harness |
-| Next action | Obtain Feature 2 human sign-off, then implement the local multi-source retrieval index |
+| Not implemented yet | Curated context guides (2nd RAG source), provider embeddings, natural-language intent parsing, input/privacy guard, Gemini adapter, bounded agent, companion response policy, UI, session feedback, AI event logs, evaluation harness |
+| Next action | Feature 3b: add curated context guides as a second retrieval source (multi-source RAG bonus); obtain Feature 2 human sign-off; do not call Gemini until context-guide provenance and tests pass |
 
 ### Current implementation boundary
 
@@ -249,7 +249,10 @@ product useful, testable, free to demo, and honest during provider failures.
 | Use one repair attempt | A bounded retry can correct formatting; repeated self-repair adds cost and unpredictability | Planned |
 | Fall back locally after failure | The app should remain functional and disclose degraded mode | Local baseline exists; provider switch planned |
 | Use specialized prompting, not call it fine-tuning | Few-shot examples and a voice card are honest, cheap, and measurable | Planned |
-| Use in-memory vectors for 200 songs | A vector database adds complexity without useful scale benefits | Planned |
+| Use in-memory vectors for 200 songs | A vector database adds complexity without useful scale benefits | Implemented (TF-IDF, in-memory Python dicts) |
+| Use pure-Python stdlib TF-IDF instead of scikit-learn | Zero new dependencies, fully inspectable math, no wheel/compat risk on Python 3.14.5, and trivially fast at 200 short docs; scikit-learn/NumPy were not installed | Implemented |
+| Build the catalog-only retriever first; defer context guides to Feature 3b | Keeps one controlled, fully testable step; the `Retriever` interface and `SourceType` already leave room for a second source | Active |
+| Keep the `Retriever` standalone — no natural-language `query` in the public request yet | The app must not accept inputs it cannot responsibly process; NL entry waits for the Phase 4 privacy guard + intent parser | Active |
 | Start hybrid ranking at 55/35/10 | Semantic relevance leads, original content score anchors behavior, session feedback personalizes modestly | Hypothesis to evaluate, not a final fact |
 | Use MMR-style diversity | Prevent five near-duplicate results while retaining relevance | Planned |
 | Never log raw sensitive prompts | Observability must not become a privacy leak | Planned |
@@ -269,8 +272,8 @@ demonstrable without a paid API or network access.
 | Gemini access | Official Google Gen AI Python SDK (`google-genai`) | Official adapter, structured outputs, function calls, embeddings | Planned; current stable package researched as 2.13.0 |
 | Structured intent/voice | `gemini-3.5-flash-lite` | Current stable low-cost/free-tier candidate for structured tasks | Planned |
 | Hosted embeddings | `gemini-embedding-2` reduced to 768 dimensions | Current stable semantic model; 768 is an officially recommended dimension | Planned |
-| Offline retrieval | scikit-learn TF-IDF + cosine similarity | Deterministic, inspectable, no API or vector database | Planned |
-| Vector storage | In-memory NumPy arrays plus a versioned local index | 200 records do not justify database operations | Planned |
+| Offline retrieval | **Pure-Python standard-library TF-IDF + cosine** (scikit-learn not used) | Deterministic, inspectable, no API/vector database, no new dependency, no Python-3.14 wheel risk; scikit-learn was overkill for 200 short docs | Implemented |
+| Vector storage | In-memory Python dicts (sparse TF-IDF) + index fingerprint | 200 records do not justify NumPy arrays or a database; fingerprint is the cache seam for future embeddings | Implemented (TF-IDF); NumPy deferred to embeddings |
 | Logs | Python JSON Lines | Appendable, diffable, no telemetry vendor | Planned |
 | Diagram | Mermaid source; Kroki/Mermaid renderer for preview | Rubric-compliant text source with free rendering | Implemented |
 | Versioning | Git and GitHub | Reproducible history and portfolio evidence | Implemented |
@@ -459,7 +462,7 @@ table and flagged-outlier check in `docs/CATALOG_DATA_CARD.md`.
 
 ### Phase 3 — custom multi-source retrieval index
 
-Status: **Planned**
+Status: **Feature 3 (local, catalog-only) implemented; context guides + provider embeddings pending**
 
 Build one canonical retrieval document per track from its rich fields. Add
 curated context guides as a second source with provenance. Implement local
@@ -470,6 +473,24 @@ dimension, and schema version.
 Done when: a structured or normalized query retrieves relevant IDs, returns
 source/provenance metadata, passes retrieval unit tests, and demonstrates a
 before/after improvement over the original scorer for context-rich requests.
+
+**Feature 3 acceptance gate (local TF-IDF retriever):**
+
+- [x] `Retriever` interface + `TfidfRetriever` exist in `src/retrieval.py`, pure standard library.
+- [x] One canonical retrieval document per track from `genre`, `mood`, `era`, `description`, `tags`, `contexts`, `instruments`.
+- [x] Deterministic TF-IDF + cosine; results ordered by score with stable `id` tie-break.
+- [x] Provenance contracts (`SourceType`, `RetrievalHit`, `RetrievalResult`) carry source type, source id, content hash, fields used, score, matched terms.
+- [x] Hard filters (`instrumental_only`, `exclude_explicit`) run before ranking.
+- [x] Index fingerprint derives from catalog content (cache/rebuild seam for future embeddings).
+- [x] No-signal (empty / out-of-vocabulary) queries return no hits rather than inventing relevance.
+- [x] `tests/test_retrieval.py` passes; full suite `44 passed` on 2026-07-27.
+- [x] `scripts/retrieval_demo.py` shows a before/after vs the numeric scorer for a context-rich phrase.
+- [x] `recommend()` path and the public request contract are unchanged (no NL `query` field added).
+
+**Still pending in Phase 3:** curated context guides as a second source with
+provenance (Feature 3b, earns the +2 multi-source bonus); provider embeddings
+(`gemini-embedding-2`) behind the same interface with on-disk index caching; and
+a before/after retrieval metric in the evaluation harness.
 
 ### Phase 4 — input/privacy guard and structured intent
 
@@ -652,8 +673,16 @@ Current limitations:
 - `model_card.md` and older README experiments include historical 20-track
   observations that must be clearly labeled or refreshed.
 - `ai_interactions.md` remains a starter template until the agent phase.
-- No provider adapter, `.env.example`, UI, persistent index, AI logger, or
-  evaluation report exists yet.
+- Retrieval is lexical (TF-IDF): it matches word forms, so paraphrases and
+  word-form differences (`"studying"` vs `"study"`) are missed until provider
+  embeddings are added. Retrieval similarity is not a calibrated probability.
+- The TF-IDF index is in-memory only (rebuilt per process); no on-disk cache
+  exists yet because it is unnecessary at 200 docs in pure Python. The index
+  fingerprint is in place so caching can be added with embeddings.
+- Retrieval is a standalone component: it is not yet wired into the `recommend()`
+  response or a degraded-mode fallback, and only the catalog source exists
+  (context guides pending).
+- No provider adapter, `.env.example`, UI, AI logger, or evaluation report exists yet.
 
 Open decisions:
 
@@ -678,6 +707,10 @@ Open decisions:
 | 2026-07-26 | Expand and validate grounding data before RAG | Retrieval quality cannot exceed source-data quality |
 | 2026-07-26 | Treat Feature 2 as data/reliability infrastructure, not claim it is RAG | Honest rubric mapping and architecture |
 | 2026-07-26 | Recommend Python 3.12 for deployment while local development is 3.14.5 | Matches current Streamlit Community Cloud default and all planned package minimums |
+| 2026-07-27 | Implement retrieval with pure-Python stdlib TF-IDF instead of scikit-learn | Zero new dependencies, inspectable math, no Python-3.14 wheel risk, trivial at 200 short docs |
+| 2026-07-27 | Build a catalog-only retriever first; defer context guides to Feature 3b | One controlled, testable step; interface (`SourceType`, `Retriever`) already leaves room for the second source and the +2 multi-source bonus |
+| 2026-07-27 | Keep the retriever standalone; add no natural-language `query` to the public request | Honest interface — NL entry belongs with the Phase 4 privacy guard + intent parser |
+| 2026-07-27 | Return no hits for no-signal queries rather than zero-score filler | Retrieval must not claim relevance it cannot justify from matched terms |
 
 ## Commands for the next developer
 
@@ -738,7 +771,15 @@ honest.
 
 ## Next action
 
-Have the project owner complete the representative and outlier review in the
-catalog data card. Then begin Phase 3 by defining a `Retriever` interface and
-building the deterministic TF-IDF implementation first. Do not call Gemini
-until the local retrieval tests and provenance contract pass.
+The `Retriever` interface and the deterministic local TF-IDF implementation are
+now built and tested (`44 passed`). Next:
+
+1. **Feature 3b — curated context guides.** Author a small set of human-written
+   context guides in `data/`, index them as a second source (`SourceType.CONTEXT_GUIDE`)
+   with provenance, and decide how guide matches inform track picks. This earns
+   the +2 multi-source RAG bonus. Add provenance/retrieval tests before anything
+   else. Still do not call Gemini until those pass.
+2. **Provider embeddings** (`gemini-embedding-2`) behind the same `Retriever`
+   interface, with on-disk index caching keyed on the index fingerprint.
+3. **Human catalog sign-off** (Feature 2) remains outstanding — complete the
+   representative and outlier review table in `docs/CATALOG_DATA_CARD.md`.

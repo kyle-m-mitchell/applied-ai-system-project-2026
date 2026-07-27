@@ -119,8 +119,9 @@ confidence.
 
 The experiments below were recorded against the original 20-track baseline and
 are preserved because they motivated later changes. They are not current
-200-track acceptance results. The current automated catalog/service result is
-`30 passed`; a dedicated AI/RAG evaluation harness remains future work.
+200-track acceptance results. The current automated catalog/service/retrieval
+result is `44 passed` (Feature 3 added TF-IDF retrieval tests); a dedicated
+AI/RAG evaluation harness with quality metrics remains future work.
 
 ### Everyday profiles I tested
 
@@ -298,9 +299,12 @@ My testing (Sections 6 and 7) pointed to four concrete next steps:
   strong matches outside the user's family, trading a little genre purity for
   real discovery.
 - **Use and evaluate the new retrieval-ready catalog.** The catalog-growth step
-  is complete at 200 tracks/20 genres. The next step is a provenance-aware local
-  TF-IDF index, followed by provider embeddings behind the same interface, with
-  before/after retrieval measurements.
+  is complete at 200 tracks/20 genres. Feature 3 added a provenance-aware local
+  TF-IDF retriever (`src/retrieval.py`) over the catalog, with a before/after demo
+  showing it surfaces context-rich and cross-genre matches the numeric scorer
+  cannot. Still ahead: curated context guides as a second source (multi-source
+  RAG), then provider embeddings behind the same `Retriever` interface, and
+  quantitative retrieval measurements in an evaluation harness.
 - **Support smarter, more expressive preferences.** Allow directional targets
   ("at least this energetic" rather than "near this"), and learn the genre/mood
   families from the data instead of hand-drawing them, so the groupings aren't

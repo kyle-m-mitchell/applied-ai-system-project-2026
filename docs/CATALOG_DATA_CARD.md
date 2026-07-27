@@ -16,8 +16,13 @@ The dataset is designed to support two different jobs:
 
 1. the original deterministic scorer uses genre, mood, and numeric audio-style
    features; and
-2. future RAG retrieval will use descriptions, tags, contexts, instruments, and
-   provenance to find semantically relevant tracks.
+2. RAG retrieval uses descriptions, tags, contexts, instruments, and provenance
+   to find semantically relevant tracks. As of Feature 3, the local TF-IDF
+   retriever (`src/retrieval.py`) builds one document per track from `genre`,
+   `mood`, `era`, `description`, `tags`, `contexts`, and `instruments`, and stores
+   a per-track content hash plus an index fingerprint. That fingerprint is derived
+   from catalog content, so it satisfies the update-policy rule below: any change
+   to catalog content invalidates a stale retrieval index.
 
 The tracks are fictional. The values do not come from audio analysis, listener
 behavior, licensed music services, or real artist profiles.
@@ -144,10 +149,11 @@ Verification command:
 python -m pytest -q
 ```
 
-Verified result on 2026-07-26:
+Verified result on 2026-07-27 (30 covered the catalog/service on 2026-07-26;
+Feature 3 added 14 retrieval tests):
 
 ```text
-30 passed
+44 passed
 ```
 
 ## Human review protocol

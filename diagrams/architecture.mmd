@@ -1,6 +1,9 @@
 %% AI Music Concierge — target architecture
 %% Solid arrows = runtime or indexing data flow.
 %% Dotted arrows = dependency, testing, or observability.
+%% Implemented so far: validated catalog source, local TF-IDF retrieval index,
+%% and the Retriever interface. Provider embeddings, context guides, the agent,
+%% guards, evaluator, Cadence voice, memory, logs, and report remain planned.
 
 flowchart TB
     subgraph RUNTIME["Runtime request and response"]
@@ -9,7 +12,7 @@ flowchart TB
         APP["Streamlit chat UI or CLI<br/>RecommendationService"]
         INPUT_GUARD["Input + privacy guard<br/>validation · PII · injection"]
         AGENT["Bounded Cadence agent<br/>structured intent + allowlisted plan"]
-        RETRIEVER["Multi-source retriever<br/>semantic search + provenance"]
+        RETRIEVER["Retriever interface<br/>local TF-IDF search + provenance (implemented)<br/>provider embeddings planned"]
         RANKER["Hard filters + hybrid ranker<br/>semantic · content · feedback · diversity"]
         EVALUATOR["Runtime evaluator<br/>IDs · constraints · duplicates · evidence"]
         POLICY["Cadence situation policy<br/>recommend · clarify · no-match · degraded"]
@@ -41,8 +44,8 @@ flowchart TB
     subgraph GROUNDING["Grounding, provider, and session context"]
         direction LR
         CURATOR(["Human curator"])
-        SOURCES[("Validated 200-song catalog<br/>+ curated context guides")]
-        INDEX["Custom semantic index<br/>chunks · embeddings · metadata · provenance"]
+        SOURCES[("Validated 200-song catalog (implemented)<br/>+ curated context guides (planned)")]
+        INDEX["Retrieval index<br/>local TF-IDF vectors + content hash (implemented)<br/>provider embeddings planned"]
         MEMORY[("Session-only memory<br/>preferences · feedback · recent context")]
         GEMINI["Gemini provider adapter<br/>structured output · embeddings · grounded language<br/>timeout + one retry"]
 
