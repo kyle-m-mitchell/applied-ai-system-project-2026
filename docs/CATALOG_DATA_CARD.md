@@ -20,9 +20,10 @@ The dataset is designed to support two different jobs:
    to find semantically relevant tracks. As of Feature 3, the local TF-IDF
    retriever (`src/retrieval.py`) builds one document per track from `genre`,
    `mood`, `era`, `description`, `tags`, `contexts`, and `instruments`, and stores
-   a per-track content hash plus an index fingerprint. That fingerprint is derived
-   from catalog content, so it satisfies the update-policy rule below: any change
-   to catalog content invalidates a stale retrieval index.
+   a per-track content hash plus an index fingerprint. That fingerprint covers
+   both sources' content (catalog and guides) and the query-expansion settings, so
+   it satisfies the update-policy rule below: any change to catalog content, guide
+   content, or expansion tuning invalidates a stale retrieval index.
 
 The tracks are fictional. The values do not come from audio analysis, listener
 behavior, licensed music services, or real artist profiles.
@@ -49,6 +50,38 @@ Generated catalog SHA-256:
 
 Regeneration is byte-idempotent: unchanged source profiles and baseline data
 produce the same catalog hash.
+
+## Context guides (second retrieval source)
+
+Feature 3b adds a **second retrieval source** alongside the catalog:
+[`data/context_guides/`](../data/context_guides/) holds one Markdown file per
+listening situation (Studying & Focus, Workout & Energy, Rainy Day & Melancholy,
+Party & Dance Floor, Wind-Down & Sleep, Road Trip & Driving, Romantic & Intimate,
+Morning Motivation). Each file's first `# Heading` is the title, the file stem is
+the guide id, and the retriever stores a per-guide content hash for provenance.
+
+Guides are **not recommendable items**. When a query matches a guide, the guide's
+distinctive catalog-vocabulary terms are folded into the track query (query
+expansion), and the guide is recorded as cited evidence (`GuideEvidence`). This
+lets a listener's word that appears in no track (for example, "concentrate")
+still reach relevant tracks.
+
+**Provenance and review.** These guides are **AI-drafted fictional prose, pending
+curator review**, in the same spirit as the catalog. They encode human judgment
+about what music is "for," so a person should review their wording for tone and
+bias before the project is presented. They are not sourced from real listening
+research.
+
+## Embedding cache (derived artifact)
+
+Feature 4 adds a third file family under `data/embeddings/` (`catalog.json`,
+`queries.json`): Gemini vectors derived from the catalog documents and a fixed
+set of example queries. It is **generated, not authored** — built once by
+`scripts/build_embeddings.py` and committed so the semantic index reproduces with
+no API key. Each cache records its embedding model and dimension and a content
+hash of the catalog documents; a mismatch marks the cache stale, and retrieval
+falls back to TF-IDF. Regenerate and re-commit it whenever catalog content, the
+model, or the dimension changes.
 
 ## Composition
 
@@ -149,11 +182,12 @@ Verification command:
 python -m pytest -q
 ```
 
-Verified result on 2026-07-27 (30 covered the catalog/service on 2026-07-26;
-Feature 3 added 14 retrieval tests):
+Verified result on 2026-07-29 (30 covered the catalog/service on 2026-07-26;
+Feature 3 added 14 retrieval tests, Feature 3b added 13 context-guide/fingerprint
+tests, and Feature 4 added 13 embedding/hybrid/fallback tests, all offline):
 
 ```text
-44 passed
+70 passed
 ```
 
 ## Human review protocol

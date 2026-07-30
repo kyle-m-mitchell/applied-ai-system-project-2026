@@ -217,6 +217,23 @@ class SourceType(str, Enum):
     CONTEXT_GUIDE = "context_guide"
 
 
+class ContextGuide(ContractModel):
+    """One curated, human-written guide about a listening situation.
+
+    Guides are a second retrieval source. They are not recommendable tracks;
+    they connect a listener's words to catalog vocabulary and provide grounded
+    context for an explanation.
+    """
+
+    guide_id: str = Field(min_length=1, max_length=120)
+    title: str = Field(min_length=1, max_length=120)
+    body: str = Field(min_length=20, max_length=2000)
+
+    def index_text(self) -> str:
+        """Return the text indexed for retrieval (title plus body)."""
+        return f"{self.title} {self.body}"
+
+
 class RetrievalHit(ContractModel):
     """One track surfaced by the retriever, with the provenance that justifies it.
 
@@ -231,7 +248,26 @@ class RetrievalHit(ContractModel):
     fields_used: tuple[str, ...] = Field(min_length=1)
     score: float = Field(ge=0.0, le=1.0)
     matched_terms: tuple[str, ...] = ()
+    semantic_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    lexical_score: float | None = Field(default=None, ge=0.0, le=1.0)
     track: CatalogTrack
+
+
+class GuideEvidence(ContractModel):
+    """A context guide that informed a retrieval, kept as cited evidence.
+
+    ``expansion_terms`` are the catalog-vocabulary terms this guide contributed
+    to the track query, which is how a guide improves retrieval without ever
+    being recommended itself.
+    """
+
+    source_type: SourceType
+    source_id: str = Field(min_length=1)
+    content_hash: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    score: float = Field(ge=0.0, le=1.0)
+    matched_terms: tuple[str, ...] = ()
+    expansion_terms: tuple[str, ...] = ()
 
 
 class RetrievalResult(ContractModel):
@@ -239,10 +275,15 @@ class RetrievalResult(ContractModel):
 
     ``index_fingerprint`` identifies the exact index the hits came from, so a
     result can be tied back to a specific catalog content hash and retrieval
-    method version.
+    method version. ``guides_used`` and ``expanded_query_terms`` record how a
+    second source (context guides) shaped this result; both are empty when no
+    guide fired.
     """
 
     query: str
     hits: tuple[RetrievalHit, ...]
     index_fingerprint: str = Field(min_length=1)
     filters_applied: tuple[str, ...] = ()
+    guides_used: tuple[GuideEvidence, ...] = ()
+    expanded_query_terms: tuple[str, ...] = ()
+    operating_mode: OperatingMode = OperatingMode.LOCAL

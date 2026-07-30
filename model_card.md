@@ -120,8 +120,10 @@ confidence.
 The experiments below were recorded against the original 20-track baseline and
 are preserved because they motivated later changes. They are not current
 200-track acceptance results. The current automated catalog/service/retrieval
-result is `44 passed` (Feature 3 added TF-IDF retrieval tests); a dedicated
-AI/RAG evaluation harness with quality metrics remains future work.
+result is `70 passed` (Feature 3 added TF-IDF retrieval tests; Feature 3b added
+context-guide/expansion/fingerprint tests; Feature 4 added embedding, hybrid, and
+fallback tests, all offline); a dedicated AI/RAG evaluation harness with quality
+metrics remains future work.
 
 ### Everyday profiles I tested
 
@@ -300,11 +302,20 @@ My testing (Sections 6 and 7) pointed to four concrete next steps:
   real discovery.
 - **Use and evaluate the new retrieval-ready catalog.** The catalog-growth step
   is complete at 200 tracks/20 genres. Feature 3 added a provenance-aware local
-  TF-IDF retriever (`src/retrieval.py`) over the catalog, with a before/after demo
-  showing it surfaces context-rich and cross-genre matches the numeric scorer
-  cannot. Still ahead: curated context guides as a second source (multi-source
-  RAG), then provider embeddings behind the same `Retriever` interface, and
-  quantitative retrieval measurements in an evaluation harness.
+  TF-IDF retriever (`src/retrieval.py`) over the catalog, and Feature 3b added a
+  second source — curated context guides (`data/context_guides/`) that expand a
+  query toward catalog vocabulary and ride along as cited evidence — making this
+  multi-source RAG, with a before/after demo. Feature 4 then added Gemini
+  embeddings and semantic+lexical hybrid ranking behind the same `Retriever`
+  interface — reproducible via a committed vector cache, a deterministic fake for
+  tests, and an honest TF-IDF fallback, with the API key kept in a git-ignored
+  `.env`. Still ahead: session feedback as a third source and quantitative
+  retrieval measurements in an evaluation harness.
+
+  **Cloud-AI use disclosure.** The embedding path sends catalog and query text to
+  Google's Gemini API; under the current free-tier terms that content may be used
+  to improve products and reviewed by humans, so no secrets or personal data are
+  embedded, and the app runs fully locally without a key.
 - **Support smarter, more expressive preferences.** Allow directional targets
   ("at least this energetic" rather than "near this"), and learn the genre/mood
   families from the data instead of hand-drawing them, so the groupings aren't

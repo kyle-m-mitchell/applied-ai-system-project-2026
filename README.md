@@ -19,7 +19,12 @@ future Streamlit UI, AI agent, and evaluation harness all use the same validated
 application path. Feature 2 expands the authoritative catalog to **200 fictional
 tracks across 20 evenly represented genres** and adds retrieval-ready
 descriptions, tags, contexts, instruments, content flags, and era metadata. The
-original 20 records remain preserved and regression-tested.
+original 20 records remain preserved and regression-tested. Features 3, 3b, and 4 add
+the **retrieval** half of RAG — a local, dependency-free TF-IDF retriever over the
+catalog, a second source of curated context guides that expand a query toward
+catalog vocabulary, and Gemini **embeddings with hybrid (semantic + lexical)
+ranking** — all behind one `Retriever` interface, with provenance, an honest
+fallback, and a before/after demo.
 
 For the complete research, decisions, roadmap, architecture status, teaching
 notes, and new-chat recovery prompt, see the
@@ -150,8 +155,60 @@ yet. That entry point arrives with the input/privacy guard and intent parser in 
 later phase. The retriever is exercised directly by tests and the demo below.
 
 **Limitation by design.** TF-IDF is *lexical*, not semantic: it matches word
-forms, so `"studying"` does not match the catalog's `"study"`. Closing that gap
-is exactly the job of the planned provider-embedding retriever.
+forms, so `"studying"` does not match the catalog's `"study"`. Context guides
+(below) bridge *some* of that gap; fully closing it is the job of the planned
+provider-embedding retriever.
+
+### Multi-source retrieval: context guides (Feature 3b)
+
+The catalog is one retrieval source. Feature 3b adds a **second source** —
+curated, human-readable **context guides** in
+[`data/context_guides/`](data/context_guides/), one Markdown file per situation
+(Studying & Focus, Workout & Energy, Rainy Day, …). This is what makes the system
+*multi-source* RAG.
+
+A guide is **not a recommendable track** — you can't recommend "the Studying
+guide" to a listener. Instead a guide does two jobs:
+
+- **Query expansion (bridging vocabulary).** A listener types `"music to
+  concentrate"`. No track contains the word "concentrate," so catalog-only
+  retrieval returns **nothing**. But the *Studying & Focus* guide does, so
+  matching it lets us fold *its* catalog-vocabulary terms (`study`, `focus`,
+  `coding`) into the query — which then retrieves the right lofi tracks. A
+  dominance threshold keeps a weak, off-topic guide from bleeding in.
+- **Cited evidence.** Each fired guide is recorded in the result's `guides_used`
+  (with `source_type`, `content_hash`, its `matched_terms`, and the exact
+  `expansion_terms` it contributed), so every result stays traceable.
+
+Guides never appear in the recommendation list — only in the evidence. The
+`data/context_guides/*.md` text is **AI-drafted and pending curator review**,
+since a guide encodes judgment about what music is "for."
+
+### Meaning: embeddings + hybrid ranking (Feature 4)
+
+TF-IDF and guides are still *lexical*. Feature 4 adds **meaning** with Gemini
+embeddings (`src/embeddings.py`) — the first feature that calls an external AI —
+so `"tunes for cramming before an exam"` can match study tracks that share **no**
+words with the query. A `HybridRetriever` blends the semantic score with the
+TF-IDF score (configurable weights, default 0.6/0.4), and every hit records both
+sub-scores.
+
+The design keeps a live API from hurting reproducibility:
+
+- **Committed vector cache.** Track embeddings are computed once
+  (`scripts/build_embeddings.py`) and saved to `data/embeddings/`, keyed on the
+  catalog content plus the model and dimension. Anyone reproduces the exact
+  semantic index from the committed file with **no key**.
+- **Deterministic fake for tests.** The whole suite runs offline via a
+  `FakeEmbedder`; live calls are never in the test path.
+- **Honest fallback.** No key, no cache, or a provider error → the hybrid
+  degrades to TF-IDF and labels the result `DEGRADED` (via `operating_mode`),
+  never pretending semantic ran.
+- **Optional, lazy dependency.** `google-genai` is imported only on the real
+  path (`requirements-embeddings.txt`), so the core installs and tests without it.
+
+The key is read only from `GEMINI_API_KEY` in a git-ignored `.env` — never code,
+logs, or commits.
 
 ### Original scoring diagram
 
@@ -264,14 +321,24 @@ file is the authoritative submission artifact.
    python3 -m src.main
    ```
 
-4. Try local retrieval (Feature 3) — no API key or network needed:
+4. Try retrieval (Features 3 / 3b / 4) — no API key or network needed:
 
    ```bash
-   python3 scripts/retrieval_demo.py "late-night study beats to focus"
+   python3 scripts/retrieval_demo.py "music to concentrate"
    ```
 
-   No dependencies beyond the standard library are required for retrieval;
-   `requirements.txt` is unchanged by Feature 3.
+   Retrieval needs no dependencies beyond the standard library. Without an
+   embedding cache the semantic panel honestly degrades to TF-IDF.
+
+5. *(Optional)* Enable the real semantic path with a Gemini key:
+
+   ```bash
+   cp .env.example .env            # then paste your key into .env (git-ignored)
+   pip install -r requirements-embeddings.txt
+   python3 scripts/build_embeddings.py   # writes data/embeddings/, then commit it
+   ```
+
+   The key is read only from `.env`; never commit it or paste it into chat.
 
 ### Running Tests
 
@@ -281,12 +348,17 @@ Run all tests with:
 python3 -m pytest
 ```
 
-The current suite contains 44 tests covering the original scorer, validated
+The current suite contains 70 tests covering the original scorer, validated
 contracts, compatibility, normalization, malformed input, 200-track balance,
 legacy preservation, retrieval-metadata integrity, schema drift, new-genre
-service behavior, non-mutation, and — new in Feature 3 — TF-IDF retrieval
-relevance, provenance, hard filters, determinism, tie-breaking, no-signal
-queries, and index fingerprinting.
+service behavior, non-mutation, TF-IDF retrieval relevance, provenance, hard
+filters, determinism, tie-breaking, no-signal queries, index fingerprinting,
+and — new in Feature 3b — context-guide loading and validation, guide-driven
+query expansion, expansion provenance, the dominance threshold, the
+guides-as-evidence-not-recommendations rule, a fingerprint that covers both
+sources' content and the expansion settings, and — new in Feature 4 — the
+embedding cache, semantic and hybrid retrieval, the exact blend math, honest
+`DEGRADED` fallback, and the query cache. Every test runs fully offline (no key).
 
 ---
 
@@ -365,42 +437,43 @@ Operating mode: local
 
 **Screenshot or video** *(optional)*: <!-- Insert a screenshot or demo video link here -->
 
-### Retrieval before / after (Feature 3)
+### Retrieval before / after (Features 3 / 3b)
 
-`scripts/retrieval_demo.py` contrasts the numeric scorer with the TF-IDF
-retriever on a free-text phrase the scorer cannot represent:
+`scripts/retrieval_demo.py` contrasts three stages on a free-text phrase the
+scorer cannot represent and whose key word (`concentrate`) appears in **no**
+track:
 
 ```bash
-python3 scripts/retrieval_demo.py "late-night study beats to focus"
+python3 scripts/retrieval_demo.py "music to concentrate"
 ```
 
 ```
 BEFORE - original numeric scorer
-  The public request accepts only structured preferences and rejects free
-  text. Placed in the only text slot (genre), the phrase matches no known
-  label, so ranking falls back to stable ID order with zero match strength:
+  Free text has nowhere to go; ranking falls back to stable ID order:
   #  1  Sunrise City               [pop      ] match strength 0.00
   #  2  Midnight Coding            [lofi     ] match strength 0.00
-  #  3  Storm Runner               [rock     ] match strength 0.00
-  #  4  Library Rain               [lofi     ] match strength 0.00
-  #  5  Gym Hero                   [pop      ] match strength 0.00
+  ...
 
-AFTER - TF-IDF retriever  (mode: local, index 98e85998c66b)
-  #  9  Focus Flow                 [lofi     ] similarity 0.435
-        source=catalog:9  matched: beats, study, focus, late, night
-  # 30  Blue Desk Lamp             [lofi     ] similarity 0.361
-        source=catalog:30  matched: beats, study, focus, late, night
-  # 32  Cloudy Bookmark            [lofi     ] similarity 0.359
-        source=catalog:32  matched: beats, study, focus, late, night
-  #  2  Midnight Coding            [lofi     ] similarity 0.356
-        source=catalog:2  matched: beats, study, focus, late, night
-  # 34  Dust on the Keys           [lofi     ] similarity 0.356
-        source=catalog:34  matched: beats, study, focus, late, night
+THEN - TF-IDF over the catalog alone  (mode: local, index 5dc9493a2e80)
+  (no lexical overlap with the catalog - retriever reports no signal)
+
+NOW - + curated context guides (query expansion)  (mode: local, index 5dc9493a2e80)
+  guide fired: 'Studying and Focus'  (score 0.126)  expanded query with: focus, best, gentle, piano
+  # 29  Margin Doodles             [lofi     ] similarity 0.220
+        source=catalog:29  matched: gentle, focus, piano
+  # 33  Late Bus Home              [lofi     ] similarity 0.220
+        source=catalog:33  matched: gentle, focus, piano
+  #  9  Focus Flow                 [lofi     ] similarity 0.205
+        source=catalog:9  matched: gentle, focus, piano
+  ...
 ```
 
-A cross-genre phrase shows retrieval reaching matches no single-genre request
-could — `"rainy day melancholy piano"` surfaces blues, r&b, and classical tracks
-together, each with the `matched_terms` that justify it.
+The second source turns a dead query into relevant results: the *Studying &
+Focus* guide bridges "concentrate" to catalog vocabulary, and the guide is cited
+as evidence rather than shown as a recommendation. Catalog-only retrieval also
+reaches matches no single-genre request could — `"rainy day melancholy piano"`
+surfaces blues, r&b, and classical tracks together, each with the `matched_terms`
+that justify it.
 
 ---
 
@@ -525,14 +598,19 @@ case-insensitive matching) fixes the ranking-level failures:
 - The public request path does not yet understand natural language; the Feature 3
   retriever is a standalone component, and adding a `query` field before the
   intent/privacy guard exists would misrepresent the application's capability.
-- Retrieval is lexical (TF-IDF), so paraphrases and word-form differences
-  (`"studying"` vs `"study"`) are missed until provider embeddings are added.
+- Semantic quality depends on the real embedding cache (a rotated key runs
+  `scripts/build_embeddings.py`); without it the hybrid degrades to lexical
+  TF-IDF and labels the result `DEGRADED`. The test-time `FakeEmbedder` captures
+  no real meaning.
 - Match strength is not calibrated confidence, retrieval similarity is not a
   probability, and a valid unknown genre can still produce zero-score stable ID
   order.
-- Companion behavior, provider privacy controls, grounded output evaluation, and
-  wiring retrieval into a degraded-mode fallback are target features, not current
-  behavior.
+- **Cloud-AI disclosure:** the optional embedding path sends catalog document
+  text and query text to Google's Gemini API. Under the free-tier terms, that
+  content may be used to improve products and reviewed by humans, so no secrets
+  or personal data should be embedded. The app runs fully locally without a key.
+- Companion behavior, provider privacy controls, and grounded output evaluation
+  are target features, not current behavior.
 
 See the [Model Card](model_card.md), [Catalog Data Card](docs/CATALOG_DATA_CARD.md),
 and [Project Handbook](docs/PROJECT_HANDBOOK.md) for deeper analysis.

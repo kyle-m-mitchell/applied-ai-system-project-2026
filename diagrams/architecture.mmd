@@ -1,9 +1,11 @@
 %% AI Music Concierge — target architecture
 %% Solid arrows = runtime or indexing data flow.
 %% Dotted arrows = dependency, testing, or observability.
-%% Implemented so far: validated catalog source, local TF-IDF retrieval index,
-%% and the Retriever interface. Provider embeddings, context guides, the agent,
-%% guards, evaluator, Cadence voice, memory, logs, and report remain planned.
+%% Implemented so far: validated catalog source, curated context guides (2nd
+%% source, via query expansion), the local TF-IDF index, Gemini embeddings with
+%% semantic+lexical hybrid ranking (committed cache + fake + TF-IDF fallback), and
+%% the Retriever interface. The agent, guards, evaluator, Cadence voice, session
+%% memory, logs, and report remain planned; Gemini is used only for embeddings.
 
 flowchart TB
     subgraph RUNTIME["Runtime request and response"]
@@ -44,10 +46,10 @@ flowchart TB
     subgraph GROUNDING["Grounding, provider, and session context"]
         direction LR
         CURATOR(["Human curator"])
-        SOURCES[("Validated 200-song catalog (implemented)<br/>+ curated context guides (planned)")]
-        INDEX["Retrieval index<br/>local TF-IDF vectors + content hash (implemented)<br/>provider embeddings planned"]
+        SOURCES[("Validated 200-song catalog (implemented)<br/>+ curated context guides (implemented, query expansion)")]
+        INDEX["Retrieval index<br/>TF-IDF (2 sources) + Gemini embeddings, committed cache (implemented)<br/>semantic+lexical hybrid ranking"]
         MEMORY[("Session-only memory<br/>preferences · feedback · recent context")]
-        GEMINI["Gemini provider adapter<br/>structured output · embeddings · grounded language<br/>timeout + one retry"]
+        GEMINI["Gemini provider adapter<br/>embeddings implemented (optional, lazy) · structured output + grounded language planned<br/>one retry, then local fallback"]
 
         CURATOR --> SOURCES
         SOURCES --> INDEX

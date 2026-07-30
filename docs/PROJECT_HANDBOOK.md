@@ -31,18 +31,18 @@ check first; those facts can become stale.
 
 ## Live project snapshot
 
-Last updated: **2026-07-27**
+Last updated: **2026-07-29**
 
 | Item | Current state |
 |---|---|
-| Branch | `main`; Feature 3 changes are uncommitted — inspect with `git status --short` |
-| Phase | **Feature 3 (local TF-IDF retrieval) implemented and tested; human catalog sign-off still pending** |
-| Working tree | New: `src/retrieval.py`, `tests/test_retrieval.py`, `scripts/retrieval_demo.py`; edited: `src/contracts.py` and docs |
-| Last verified regression check | `44 passed` from `.venv/bin/python -m pytest -q` on 2026-07-27 |
-| Implemented | Original scorer, strict Pydantic contracts, shared service, validated CLI, 200-track retrieval-ready catalog, integrity tests, catalog data card, **local pure-Python TF-IDF retriever with provenance behind a `Retriever` interface, retrieval tests, before/after demo**, target Mermaid architecture |
-| In progress | Human review of the catalog’s representative and flagged records |
-| Not implemented yet | Curated context guides (2nd RAG source), provider embeddings, natural-language intent parsing, input/privacy guard, Gemini adapter, bounded agent, companion response policy, UI, session feedback, AI event logs, evaluation harness |
-| Next action | Feature 3b: add curated context guides as a second retrieval source (multi-source RAG bonus); obtain Feature 2 human sign-off; do not call Gemini until context-guide provenance and tests pass |
+| Branch | `main`; Features 3, 3b, and 4 are uncommitted — inspect with `git status --short` |
+| Phase | **Feature 4 (Gemini embeddings + hybrid ranking) implemented and tested offline; real embedding cache + human sign-off pending** |
+| Working tree | New: `src/embeddings.py`, `src/retrieval.py`, `tests/test_{retrieval,context_guides,embeddings}.py`, `scripts/{retrieval_demo,build_embeddings}.py`, `data/context_guides/*.md`, `.env.example`, `requirements-embeddings.txt`; edited: `src/contracts.py`, `.gitignore`, docs |
+| Last verified regression check | `70 passed` from `.venv/bin/python -m pytest -q` on 2026-07-29 (fully offline; no key) |
+| Implemented | Original scorer, strict Pydantic contracts, shared service, validated CLI, 200-track catalog, integrity tests, catalog data card, **TF-IDF retriever + curated context guides (query expansion) behind a `Retriever` interface, a Gemini embedding retriever + semantic/lexical hybrid ranking with a committed-cache + deterministic-fake + TF-IDF-fallback design, retrieval/guide/embedding tests, before/after demo**, target Mermaid architecture |
+| In progress | Real embedding-cache generation (needs a rotated key); human review of catalog records and AI-drafted context-guide wording |
+| Not implemented yet | Natural-language intent parsing, input/privacy guard, bounded agent, companion response policy, UI, session feedback, AI event logs, evaluation harness |
+| Next action | Generate + commit the real embedding cache (`scripts/build_embeddings.py` with a git-ignored key); then Phase 4 (input/privacy guard + intent parser), which finally lets a natural-language `query` reach the retrievers through the public path |
 
 ### Current implementation boundary
 
@@ -84,7 +84,7 @@ remaining small enough to explain and operate reliably.
 | Reliability or guardrail | 3 | Contracts, input/privacy guard, grounded output evaluator, fallback | Contracts implemented; remaining layers planned |
 | README and setup | 3 | Goals, installation, run/test commands, sample output | Partially implemented |
 | AI collaboration reflection | 3 | Model card records prompting, debugging, one useful and one flawed suggestion, limits | Planned refresh |
-| Multi-source RAG bonus | +2 | Song records + context guides + session feedback, with before/after evidence | Planned |
+| Multi-source RAG bonus | +2 | Song records + context guides + session feedback, with before/after evidence | Implemented (two sources: catalog + curated context guides, with guide-driven query expansion and a before/after demo; session feedback is the 3rd source, added in Phase 6) |
 | Agentic workflow bonus | +2 | Bounded steps/tool calls and structured trace in `ai_interactions.md` | Planned |
 | Specialized behavior bonus | +2 | Cadence voice card/few-shot examples and baseline comparison | Planned |
 | Evaluation harness bonus | +2 | Predefined cases and a pass/fail metric summary | Planned |
@@ -251,7 +251,13 @@ product useful, testable, free to demo, and honest during provider failures.
 | Use specialized prompting, not call it fine-tuning | Few-shot examples and a voice card are honest, cheap, and measurable | Planned |
 | Use in-memory vectors for 200 songs | A vector database adds complexity without useful scale benefits | Implemented (TF-IDF, in-memory Python dicts) |
 | Use pure-Python stdlib TF-IDF instead of scikit-learn | Zero new dependencies, fully inspectable math, no wheel/compat risk on Python 3.14.5, and trivially fast at 200 short docs; scikit-learn/NumPy were not installed | Implemented |
-| Build the catalog-only retriever first; defer context guides to Feature 3b | Keeps one controlled, fully testable step; the `Retriever` interface and `SourceType` already leave room for a second source | Active |
+| Build the catalog-only retriever first; defer context guides to Feature 3b | Keeps one controlled, fully testable step; the `Retriever` interface and `SourceType` already leave room for a second source | Implemented (3b done) |
+| Use context guides as query expansion + evidence, not as recommendable items | A guide is not a track; expanding the query with a guide's catalog-vocabulary terms improves track retrieval while keeping "tracks are the only recommendable items" intact | Implemented |
+| Gate guide expansion with a dominance threshold (≥ 0.5 × top guide score) | Drops weak, spurious guide matches that would otherwise inject off-topic expansion terms | Implemented |
+| Use real Gemini embeddings but keep the system reproducible via a committed cache + deterministic fake + TF-IDF fallback | Gemini is the tool that *builds* a reproducible artifact; the committed vectors and offline fallback are what make it portable and testable with no key | Implemented |
+| Feature 4 hybrid blends semantic + lexical (not yet the 55/35/10) | The numeric-scorer and feedback weights need the Phase 4 intent parser and Phase 6 memory; dense+sparse is the buildable blend now, with configurable weights | Implemented |
+| Keep `google-genai` an optional, lazily imported dependency | Core, tests, and fallback must run with the package absent (and dodge Python-3.14 wheel risk) | Implemented |
+| Read the API key only from `GEMINI_API_KEY` (git-ignored `.env`); never log or commit it | A live provider must not turn observability or version control into a secret leak | Implemented |
 | Keep the `Retriever` standalone — no natural-language `query` in the public request yet | The app must not accept inputs it cannot responsibly process; NL entry waits for the Phase 4 privacy guard + intent parser | Active |
 | Start hybrid ranking at 55/35/10 | Semantic relevance leads, original content score anchors behavior, session feedback personalizes modestly | Hypothesis to evaluate, not a final fact |
 | Use MMR-style diversity | Prevent five near-duplicate results while retaining relevance | Planned |
@@ -269,9 +275,9 @@ demonstrable without a paid API or network access.
 | Runtime contracts | Pydantic 2 | Strict schemas and useful validation errors | Implemented |
 | Unit/integration tests | pytest | Small, readable tests and fixtures | Implemented |
 | Web UI | Streamlit | Fast Python-only interactive demo with session state | Declared; UI planned |
-| Gemini access | Official Google Gen AI Python SDK (`google-genai`) | Official adapter, structured outputs, function calls, embeddings | Planned; current stable package researched as 2.13.0 |
+| Gemini access | Official Google Gen AI Python SDK (`google-genai`) | Official adapter, structured outputs, function calls, embeddings | Implemented for embeddings as an **optional, lazily imported** dependency (`requirements-embeddings.txt`, ~2.13.0); core/tests never import it |
 | Structured intent/voice | `gemini-3.5-flash-lite` | Current stable low-cost/free-tier candidate for structured tasks | Planned |
-| Hosted embeddings | `gemini-embedding-2` reduced to 768 dimensions | Current stable semantic model; 768 is an officially recommended dimension | Planned |
+| Hosted embeddings | `gemini-embedding-2` reduced to 768 dimensions | Current stable semantic model; 768 is an officially recommended dimension | Implemented (committed vector cache + deterministic fake for tests + TF-IDF fallback) |
 | Offline retrieval | **Pure-Python standard-library TF-IDF + cosine** (scikit-learn not used) | Deterministic, inspectable, no API/vector database, no new dependency, no Python-3.14 wheel risk; scikit-learn was overkill for 200 short docs | Implemented |
 | Vector storage | In-memory Python dicts (sparse TF-IDF) + index fingerprint | 200 records do not justify NumPy arrays or a database; fingerprint is the cache seam for future embeddings | Implemented (TF-IDF); NumPy deferred to embeddings |
 | Logs | Python JSON Lines | Appendable, diffable, no telemetry vendor | Planned |
@@ -462,7 +468,7 @@ table and flagged-outlier check in `docs/CATALOG_DATA_CARD.md`.
 
 ### Phase 3 — custom multi-source retrieval index
 
-Status: **Feature 3 (local, catalog-only) implemented; context guides + provider embeddings pending**
+Status: **Feature 3 + 3b (local, multi-source: catalog + context guides) implemented; provider embeddings pending**
 
 Build one canonical retrieval document per track from its rich fields. Add
 curated context guides as a second source with provenance. Implement local
@@ -481,16 +487,36 @@ before/after improvement over the original scorer for context-rich requests.
 - [x] Deterministic TF-IDF + cosine; results ordered by score with stable `id` tie-break.
 - [x] Provenance contracts (`SourceType`, `RetrievalHit`, `RetrievalResult`) carry source type, source id, content hash, fields used, score, matched terms.
 - [x] Hard filters (`instrumental_only`, `exclude_explicit`) run before ranking.
-- [x] Index fingerprint derives from catalog content (cache/rebuild seam for future embeddings).
+- [x] Index fingerprint covers both sources' content (catalog + guides) and the expansion settings (cache/rebuild seam for future embeddings).
 - [x] No-signal (empty / out-of-vocabulary) queries return no hits rather than inventing relevance.
-- [x] `tests/test_retrieval.py` passes; full suite `44 passed` on 2026-07-27.
+- [x] `tests/test_retrieval.py` passes.
 - [x] `scripts/retrieval_demo.py` shows a before/after vs the numeric scorer for a context-rich phrase.
 - [x] `recommend()` path and the public request contract are unchanged (no NL `query` field added).
 
-**Still pending in Phase 3:** curated context guides as a second source with
-provenance (Feature 3b, earns the +2 multi-source bonus); provider embeddings
-(`gemini-embedding-2`) behind the same interface with on-disk index caching; and
-a before/after retrieval metric in the evaluation harness.
+**Feature 3b acceptance gate (curated context guides — second source):**
+
+- [x] Curated guides live in `data/context_guides/*.md` (human-readable, one file per situation), loaded and validated as `ContextGuide`.
+- [x] Guides are indexed as a second source (`SourceType.CONTEXT_GUIDE`) with content hashes.
+- [x] Guide-driven **query expansion**: a matching guide folds its distinctive catalog-vocabulary terms into the track query; a dominance threshold drops weak matches.
+- [x] Guides are **evidence, never recommendations** — they appear only in `guides_used`/`expanded_query_terms`, never in `hits`.
+- [x] `GuideEvidence` records source type, source id, content hash, title, score, matched terms, and contributed expansion terms.
+- [x] Before/after demonstrated: bridge queries (e.g. "music to concentrate") return **no** track-only hits but relevant hits once a guide expands the query.
+- [x] `tests/test_context_guides.py` passes (incl. fingerprint coverage of guide content + expansion settings); full suite `70 passed` on 2026-07-29.
+
+**Feature 4 acceptance gate (Gemini embeddings + hybrid ranking):**
+
+- [x] `Embedder` interface with a deterministic offline `FakeEmbedder` and a lazy `GeminiEmbedder` (`gemini-embedding-2`, 768-d, truncate→renormalize).
+- [x] `EmbeddingRetriever` (semantic) and `HybridRetriever` (semantic+lexical blend, configurable weights) behind the same `Retriever` interface.
+- [x] Committed embedding cache keyed on catalog content + model + dimension; loader detects a stale/mismatched cache.
+- [x] Honest fallback: missing/stale cache or a provider error → TF-IDF, `operating_mode=DEGRADED`; real semantic path is `GEMINI`.
+- [x] Reproducibility: `google-genai` is optional and lazily imported; the full suite (`70 passed` on 2026-07-29) and the fallback run with **no key**; the demo reproduces offline from committed track + query caches.
+- [x] Secret handling: key only from `GEMINI_API_KEY` (git-ignored `.env`), never logged or committed; `.env.example` provided.
+- [x] `recommend()` path and the public request contract unchanged (still no NL `query` field).
+- [ ] Real embedding cache generated and committed (`scripts/build_embeddings.py` with a rotated key) and a real paraphrase before/after recorded.
+
+**Still pending in Phase 3:** the real committed cache (above); session feedback
+as a third source (Phase 6); and a before/after retrieval metric in the
+evaluation harness.
 
 ### Phase 4 — input/privacy guard and structured intent
 
@@ -579,10 +605,12 @@ rubric claim from committed artifacts.
 
 ### Sources
 
-1. **Song catalog:** authoritative IDs and metadata.
+1. **Song catalog:** authoritative IDs and metadata. *Implemented* (TF-IDF index).
 2. **Curated context guides:** human-written explanations of activity/mood
-   relationships and responsible recommendation rules.
+   relationships and responsible recommendation rules. *Implemented* as
+   `data/context_guides/*.md`, used for guide-driven query expansion + evidence.
 3. **Session feedback:** ephemeral likes, dislikes, and recent preferences.
+   *Planned* (Phase 6).
 
 Every retrieved item carries source type, source ID, content hash, and fields
 used. Session feedback is context, not a permanent document.
@@ -680,8 +708,18 @@ Current limitations:
   exists yet because it is unnecessary at 200 docs in pure Python. The index
   fingerprint is in place so caching can be added with embeddings.
 - Retrieval is a standalone component: it is not yet wired into the `recommend()`
-  response or a degraded-mode fallback, and only the catalog source exists
-  (context guides pending).
+  response.
+- Semantic quality needs the real committed embedding cache (a rotated key runs
+  `scripts/build_embeddings.py`). Without it, the hybrid honestly degrades to
+  TF-IDF and labels the result `DEGRADED`. The `FakeEmbedder` exercises the
+  plumbing only — it captures no real meaning.
+- Embedding spaces are model- and dimension-specific; changing either requires
+  re-embedding (the cache key enforces this).
+- The context guides are AI-drafted fictional prose pending curator review; their
+  wording encodes judgment about what music is "for" and can carry bias.
+- Guide-driven query expansion is still lexical: a guide only helps when the
+  listener's words overlap the guide, and it contributes only terms the catalog
+  already uses.
 - No provider adapter, `.env.example`, UI, AI logger, or evaluation report exists yet.
 
 Open decisions:
@@ -711,6 +749,11 @@ Open decisions:
 | 2026-07-27 | Build a catalog-only retriever first; defer context guides to Feature 3b | One controlled, testable step; interface (`SourceType`, `Retriever`) already leaves room for the second source and the +2 multi-source bonus |
 | 2026-07-27 | Keep the retriever standalone; add no natural-language `query` to the public request | Honest interface — NL entry belongs with the Phase 4 privacy guard + intent parser |
 | 2026-07-27 | Return no hits for no-signal queries rather than zero-score filler | Retrieval must not claim relevance it cannot justify from matched terms |
+| 2026-07-27 | Feature 3b: context guides act via query expansion + evidence, not as recommendable items | A guide is not a track; expanding the query with a guide's catalog terms improves retrieval while keeping tracks the only recommendable items, and yields a clean before/after |
+| 2026-07-27 | Store context guides as one Markdown file per situation | Human-authored, diffable, curator-reviewable; the file stem is the guide id and the first heading is the title |
+| 2026-07-29 | Feature 4: real Gemini embeddings, made reproducible by a committed vector cache + deterministic fake + TF-IDF fallback | Lets the project use a live AI without depending on it — tests and demos run with no key, results stay portable |
+| 2026-07-29 | Hybrid ranking blends semantic + lexical only for now (configurable weights) | The numeric-scorer/feedback weights await Phase 4/6; dense+sparse is the honest blend the current inputs support |
+| 2026-07-29 | `google-genai` optional/lazy; key from a git-ignored `.env` only | Keeps the core installable and testable without the SDK or a key, and keeps secrets out of code, logs, and version control |
 
 ## Commands for the next developer
 
@@ -771,15 +814,15 @@ honest.
 
 ## Next action
 
-The `Retriever` interface and the deterministic local TF-IDF implementation are
-now built and tested (`44 passed`). Next:
+Retrieval is built and tested offline (`70 passed`): TF-IDF (Feature 3), context
+guides (Feature 3b), and Gemini embeddings + hybrid ranking (Feature 4), all
+behind one `Retriever` interface with an honest TF-IDF fallback. Next:
 
-1. **Feature 3b — curated context guides.** Author a small set of human-written
-   context guides in `data/`, index them as a second source (`SourceType.CONTEXT_GUIDE`)
-   with provenance, and decide how guide matches inform track picks. This earns
-   the +2 multi-source RAG bonus. Add provenance/retrieval tests before anything
-   else. Still do not call Gemini until those pass.
-2. **Provider embeddings** (`gemini-embedding-2`) behind the same `Retriever`
-   interface, with on-disk index caching keyed on the index fingerprint.
-3. **Human catalog sign-off** (Feature 2) remains outstanding — complete the
-   representative and outlier review table in `docs/CATALOG_DATA_CARD.md`.
+1. **Generate the real embedding cache.** Rotate the pasted key, put it in a
+   git-ignored `.env`, `pip install -r requirements-embeddings.txt` (Python 3.12
+   recommended), run `python scripts/build_embeddings.py`, commit
+   `data/embeddings/`, and record a real paraphrase before/after.
+2. **Human sign-off** remains outstanding — the catalog representative/outlier
+   review in `docs/CATALOG_DATA_CARD.md`, plus the AI-drafted context-guide wording.
+3. **Phase 4** (input/privacy guard + intent parser) is what finally lets a
+   natural-language `query` reach these retrievers through the public path.

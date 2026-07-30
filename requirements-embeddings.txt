@@ -1,0 +1,6 @@
+# Optional dependency for the real Gemini embedding path (Feature 4).
+# The core app, the full test suite, and the local fallback all run WITHOUT this.
+# Install it only to run scripts/build_embeddings.py or embed live queries:
+#   pip install -r requirements-embeddings.txt
+# (Prefer Python 3.12 here; google-genai requires Python >= 3.10.)
+google-genai>=2.13,<3
