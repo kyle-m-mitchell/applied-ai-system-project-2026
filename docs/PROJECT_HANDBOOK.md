@@ -31,35 +31,35 @@ check first; those facts can become stale.
 
 ## Live project snapshot
 
-Last updated: **2026-07-29**
+Last updated: **2026-07-30**
 
 | Item | Current state |
 |---|---|
-| Branch | `main`; Features 3, 3b, and 4 are uncommitted — inspect with `git status --short` |
-| Phase | **Feature 4 (Gemini embeddings + hybrid ranking) implemented, tested offline, and validated against the real API; human sign-off pending** |
-| Working tree | New: `src/embeddings.py`, `src/retrieval.py`, `tests/test_{retrieval,context_guides,embeddings}.py`, `scripts/{retrieval_demo,build_embeddings}.py`, `data/context_guides/*.md`, `data/embeddings/{catalog,queries}.json` (real committed vectors), `.env.example`; edited: `src/contracts.py`, `requirements.txt`, `.gitignore`, docs |
-| Last verified regression check | `70 passed` from `.venv/bin/python -m pytest -q` on 2026-07-29 (fully offline; no key). Real cache built 2026-07-30 |
-| Implemented | Original scorer, strict Pydantic contracts, shared service, validated CLI, 200-track catalog, integrity tests, catalog data card, **TF-IDF retriever + curated context guides (query expansion) behind a `Retriever` interface, a Gemini embedding retriever + semantic/lexical hybrid ranking with a committed-cache + deterministic-fake + TF-IDF-fallback design, real committed `gemini-embedding-2` vectors, retrieval/guide/embedding tests, before/after demo**, target Mermaid architecture |
+| Branch | `main`; Features 3, 3b, 4, and Phase 4 are uncommitted — inspect with `git status --short` |
+| Phase | **Phase 4 (natural-language input/privacy guard + deterministic intent parser) implemented and tested; wired through the public CLI; human sign-off pending** |
+| Working tree | New: `src/{guard,intent,companion,embeddings,retrieval}.py`, `tests/test_{guard,intent,companion,retrieval,context_guides,embeddings}.py`, `scripts/{retrieval_demo,build_embeddings}.py`, `data/context_guides/*.md`, `data/embeddings/{catalog,queries}.json`, `.env.example`; edited: `src/{contracts,main}.py`, `requirements.txt`, `.gitignore`, docs |
+| Last verified regression check | `95 passed` from `.venv/bin/python -m pytest -q` on 2026-07-30 (fully offline; no key) |
+| Implemented | Original scorer, strict Pydantic contracts, shared service, 200-track catalog, integrity tests, catalog data card, TF-IDF retriever + context guides (query expansion), Gemini embedding retriever + semantic/lexical hybrid ranking (committed cache + fake + TF-IDF fallback), real `gemini-embedding-2` vectors, **an input/privacy guard (PII/secret redaction, prompt-injection stripping, crisis safe-response) + a deterministic intent parser + a bounded `MusicCompanion` that finally accepts natural language through the CLI**, full test suite, before/after demos, target Mermaid architecture |
 | In progress | Human review of catalog records and AI-drafted context-guide wording; rotating the exposed API key |
-| Not implemented yet | Natural-language intent parsing, input/privacy guard, bounded agent, companion response policy, UI, session feedback, AI event logs, evaluation harness |
-| Next action | Phase 4 (input/privacy guard + intent parser), which finally lets a natural-language `query` reach the retrievers through the public path; complete human sign-off; rotate the pasted key |
+| Not implemented yet | Gemini structured intent; the full bounded-agent state machine + Cadence persona/voice (Phase 5); Streamlit UI; session feedback; AI event logs; evaluation harness |
+| Next action | Phase 5 (bounded agent + Cadence voice/persona over the companion's actions), and/or a Gemini structured-intent parser behind the same `IntentParser` shape; complete human sign-off; rotate the pasted key |
 
 ### Current implementation boundary
 
-The application currently accepts structured preferences only:
+Two validated entry points share the one catalog:
 
 ```text
-RecommendationRequest
-    → RecommendationService
-    → original deterministic recommend_songs scorer
-    → RecommendationResult
+structured path:  RecommendationRequest → RecommendationService → scorer → RecommendationResult
+language path:     text → MusicCompanion → InputGuard → IntentParser → Retriever → CompanionResponse
 ```
 
-There is deliberately no natural-language `query` field yet. Accepting a query
-while ignoring its meaning would be a dishonest interface: it would look like
-the system understood the listener even though results would be based on
-unrelated defaults or ID order. `query` becomes valid only when the guard,
-intent parser, and retrieval path exist.
+The natural-language path is honest *because* the guard and deterministic intent
+parser now exist: free text is size-checked, PII/secrets are redacted (and kept
+local, never sent to the provider), injection directives are stripped, crisis
+language gets a safe response, and only then does the parsed intent drive
+retrieval. Sensitive input never reaches Gemini. `RecommendationRequest` remains
+structured-only by design; language enters through `MusicCompanion`, not a
+`query` field bolted onto the scorer request.
 
 ## Assignment and definition of success
 
@@ -523,7 +523,7 @@ quantitative before/after retrieval metric in the evaluation harness.
 
 ### Phase 4 — input/privacy guard and structured intent
 
-Status: **Planned**
+Status: **Implemented (deterministic); Gemini structured intent deferred**
 
 Add honest natural-language `query` support. Validate size/type, detect likely
 secrets and direct identifiers, identify prompt-injection patterns, and convert
@@ -533,6 +533,16 @@ once, repair once, then use a deterministic rule parser.
 Done when: valid language changes retrieval; unsafe/sensitive input follows a
 safe path; unsupported constraints are not invented; raw private text is not
 logged.
+
+**Phase 4 acceptance gate:**
+
+- [x] `InputGuard` (`src/guard.py`): size limit; PII/secret **redaction** (email, phone, card/SSN-like, key-like/high-entropy); prompt-injection stripping; conservative crisis → safe response. Deterministic, offline, auditable regexes.
+- [x] Deterministic `IntentParser` (`src/intent.py`) reusing the scorer's genre/mood vocabulary: hard-filter cues (`no vocals` → instrumental-only, `clean` → exclude-explicit), genre/mood detection (incl. multi-word), one clarifying question when nothing is recognized.
+- [x] `MusicCompanion` (`src/companion.py`): bounded actions `recommend / clarify / no_match / safe_response / degraded`; valid language drives the hybrid retriever; **sensitive input is routed to the local retriever and never reaches Gemini**.
+- [x] Wired through the public CLI: `python -m src.main "clean chill beats for studying, no vocals"` returns instrumental study tracks (mode `gemini`); a PII query returns results at mode `local`; injection/vague → clarify; no-arg → the unchanged structured scorer.
+- [x] Raw private text is never logged or sent to the provider (redacted before retrieval).
+- [x] `tests/test_{guard,intent,companion}.py` pass; full suite `95 passed` on 2026-07-30, fully offline.
+- [ ] Gemini structured-intent parser behind the same `IntentParser.parse` shape (deferred).
 
 ### Phase 5 — bounded agent, evaluator, and Cadence
 
@@ -704,14 +714,17 @@ Current limitations:
 - `model_card.md` and older README experiments include historical 20-track
   observations that must be clearly labeled or refreshed.
 - `ai_interactions.md` remains a starter template until the agent phase.
-- Retrieval is lexical (TF-IDF): it matches word forms, so paraphrases and
-  word-form differences (`"studying"` vs `"study"`) are missed until provider
-  embeddings are added. Retrieval similarity is not a calibrated probability.
-- The TF-IDF index is in-memory only (rebuilt per process); no on-disk cache
-  exists yet because it is unnecessary at 200 docs in pure Python. The index
-  fingerprint is in place so caching can be added with embeddings.
-- Retrieval is a standalone component: it is not yet wired into the `recommend()`
-  response.
+- TF-IDF retrieval is lexical (word forms); embeddings add meaning, but semantic
+  quality needs the committed cache and retrieval similarity is not a calibrated
+  probability.
+- The input guard is a coarse, deterministic regex net: it can over-redact
+  (safe) or miss novel PII/injection phrasings. The crisis detector is
+  conservative and is **not** a substitute for real help.
+- The intent parser is rule-based, so it understands only the genre/mood
+  vocabulary and filter cues it knows; broader phrasing is handled by retrieval,
+  not by structured parsing, until a Gemini structured-intent parser is added.
+- Natural language reaches retrieval through `MusicCompanion`; the structured
+  scorer path (`RecommendationService.recommend`) is intentionally separate.
 - Semantic quality needs the real committed embedding cache (a rotated key runs
   `scripts/build_embeddings.py`). Without it, the hybrid honestly degrades to
   TF-IDF and labels the result `DEGRADED`. The `FakeEmbedder` exercises the
@@ -759,6 +772,9 @@ Open decisions:
 | 2026-07-29 | Embeddings call the Gemini REST API via stdlib `urllib` (no `google-genai` SDK); key from a git-ignored `.env` only | The SDK's `cryptography` dep has no Python-3.14 wheel and fails to build without Rust/OpenSSL; REST needs no third-party package. Keeps secrets out of code, logs, and version control |
 | 2026-07-30 | Add `certifi` (pure-Python CA bundle) with a system-trust fallback | The python.org 3.14 build has no usable system trust store, so `urllib` TLS verification fails; `certifi` fixes it with no compilation |
 | 2026-07-30 | Embed one document per `embedContent` call (not sync batch); throttle + backoff + resumable incremental cache | `gemini-embedding-2` exposes single `embedContent` and `asyncBatchEmbedContent`, not sync `batchEmbedContents`; free-tier RPM returns 429, so the build throttles, backs off, and saves progress to resume |
+| 2026-07-30 | Phase 4: natural language enters through a `MusicCompanion`, not a `query` field on `RecommendationRequest` | Keeps the trusted structured-scorer request pure and sets up Phase 5's bounded agent + Cadence voice; two validated entry points, one catalog |
+| 2026-07-30 | Deterministic rule-based intent parser first (Gemini structured intent deferred behind the same interface) | Reproducible and key-free; the rule parser is the required fallback regardless — same local-first pattern as retrieval |
+| 2026-07-30 | Guard redacts PII/secrets and routes sensitive queries to the local retriever | Sensitive text must never reach the provider or logs; redaction happens before retrieval, and a sensitive query is answered at operating mode `local` |
 
 ## Commands for the next developer
 
@@ -819,15 +835,18 @@ honest.
 
 ## Next action
 
-Retrieval is built and tested offline (`70 passed`): TF-IDF (Feature 3), context
-guides (Feature 3b), and Gemini embeddings + hybrid ranking (Feature 4), all
-behind one `Retriever` interface with an honest TF-IDF fallback. Next:
+The full local stack is built and tested offline (`95 passed`): TF-IDF (Feature
+3), context guides (Feature 3b), Gemini embeddings + hybrid ranking (Feature 4,
+with a real committed cache), and now a natural-language front door — guard +
+deterministic intent parser + `MusicCompanion` wired through the CLI (Phase 4).
+Next:
 
-1. **Generate the real embedding cache.** Rotate the pasted key, put it in a
-   git-ignored `.env`, run `python scripts/build_embeddings.py` (no extra packages
-   — stdlib REST, runs on 3.14), commit `data/embeddings/`, and record a real
-   paraphrase before/after.
-2. **Human sign-off** remains outstanding — the catalog representative/outlier
-   review in `docs/CATALOG_DATA_CARD.md`, plus the AI-drafted context-guide wording.
-3. **Phase 4** (input/privacy guard + intent parser) is what finally lets a
-   natural-language `query` reach these retrievers through the public path.
+1. **Phase 5 — bounded agent + Cadence.** Formalize the companion's actions
+   (`recommend / clarify / no_match / safe_response / degraded`) into an explicit
+   state machine, add a grounding evaluator over the evidence, and render replies
+   in Cadence's voice (voice card + few-shot, no temperature knob).
+2. **Optional:** a Gemini structured-intent parser behind the same
+   `IntentParser.parse` shape, with the deterministic parser as the fallback.
+3. **Human sign-off** remains outstanding — the catalog representative/outlier
+   review in `docs/CATALOG_DATA_CARD.md`, plus the AI-drafted context-guide
+   wording. **Rotate the pasted API key.**

@@ -32,11 +32,11 @@ class OperatingMode(str, Enum):
 
 
 class RecommendationRequest(ContractModel):
-    """Structured listener preferences accepted by the current recommender.
+    """Structured listener preferences accepted by the deterministic scorer.
 
-    Natural-language ``query`` input will be added with the intent-parsing
-    feature. Accepting it before the application can interpret it would create
-    a misleading API.
+    This request stays structured-only by design. Natural-language input is
+    handled separately by ``MusicCompanion`` (guard → intent parser → retrieval),
+    so the trusted scorer path never has to interpret free text.
     """
 
     PREFERENCE_FIELDS: ClassVar[tuple[str, ...]] = (
@@ -287,3 +287,68 @@ class RetrievalResult(ContractModel):
     guides_used: tuple[GuideEvidence, ...] = ()
     expanded_query_terms: tuple[str, ...] = ()
     operating_mode: OperatingMode = OperatingMode.LOCAL
+
+
+class GuardCategory(str, Enum):
+    """How the input/privacy guard classified a raw natural-language query."""
+
+    OK = "ok"
+    EMPTY = "empty"
+    TOO_LONG = "too_long"
+    SENSITIVE = "sensitive"  # contained PII or a secret (now redacted)
+    INJECTION = "injection"  # contained a prompt-injection directive (now stripped)
+    HIGH_RISK = "high_risk"  # crisis/self-harm; routed to a safe response
+
+
+class GuardVerdict(ContractModel):
+    """The guard's decision about one raw query.
+
+    ``sanitized_query`` is always safe to retrieve on and to log: PII/secret
+    spans are replaced with ``[redacted]`` and injection directives are stripped,
+    so raw sensitive text never reaches retrieval, the provider, or logs.
+    """
+
+    category: GuardCategory
+    sanitized_query: str = ""
+    reason: str = ""
+
+
+class MusicIntent(ContractModel):
+    """Structured intent parsed from a guarded query.
+
+    ``query`` is the sanitized text handed to the retriever; the categorical and
+    filter fields are extracted deterministically from recognizable music words.
+    """
+
+    query: str = ""
+    genre: str | None = Field(default=None, max_length=80)
+    mood: str | None = Field(default=None, max_length=80)
+    instrumental_only: bool = False
+    exclude_explicit: bool = False
+    limit: int = Field(default=5, ge=1, le=20)
+    needs_clarification: bool = False
+    clarification: str | None = None
+    source: str = "rules"
+
+
+class CompanionAction(str, Enum):
+    """The bounded set of actions the companion may take for one query."""
+
+    RECOMMEND = "recommend"
+    CLARIFY = "clarify"
+    NO_MATCH = "no_match"
+    SAFE_RESPONSE = "safe_response"
+    DEGRADED = "degraded"
+
+
+class CompanionResponse(ContractModel):
+    """Validated response from the natural-language companion.
+
+    ``retrieval`` reuses the retriever's own result (hits, provenance, operating
+    mode, guide evidence); it is ``None`` for clarify/safe/empty outcomes.
+    """
+
+    action: CompanionAction
+    message: str
+    retrieval: RetrievalResult | None = None
+    intent: MusicIntent | None = None

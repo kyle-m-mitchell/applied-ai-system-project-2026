@@ -212,6 +212,38 @@ The design keeps a live API from hurting reproducibility:
 The key is read only from `GEMINI_API_KEY` in a git-ignored `.env` — never code,
 logs, or commits.
 
+### The natural-language front door (Phase 4)
+
+Until now, retrieval was reachable only through the demo — the public app
+accepted no free text, on purpose. Phase 4 adds the missing front half so a typed
+sentence can enter honestly:
+
+1. **Input/privacy guard** ([`src/guard.py`](src/guard.py)) — rejects oversized
+   input; **redacts** emails, phone numbers, and key-like secrets so they never
+   reach retrieval, the provider, or logs; strips prompt-injection directives
+   (user text is data, never instruction); and routes clear crisis language to a
+   brief, non-clinical safe response.
+2. **Deterministic intent parser** ([`src/intent.py`](src/intent.py)) — reuses
+   the scorer's genre/mood vocabulary to pull out hard filters (`no vocals` →
+   instrumental-only, `clean` → exclude-explicit) and asks one clarifying
+   question when it recognizes nothing.
+3. **`MusicCompanion`** ([`src/companion.py`](src/companion.py)) — a bounded flow
+   with a small set of actions (`recommend / clarify / no_match / safe_response /
+   degraded`) that drives the hybrid retriever. **Sensitive input is routed to
+   the local retriever and never sent to Gemini.**
+
+```bash
+python -m src.main "clean chill beats for studying, no vocals"
+#   -> instrumental study tracks, hard filters applied, operating mode: gemini
+python -m src.main "my email is a@b.com, find me melancholy piano"
+#   -> email redacted, operating mode: local (never the provider), still recommends
+python -m src.main "music"          # -> one clarifying question
+python -m src.main                  # -> the original structured scorer, unchanged
+```
+
+Natural language enters through `MusicCompanion`, not a `query` field on the
+structured `RecommendationRequest` — the trusted scorer path stays pure.
+
 ### Original scoring diagram
 
 ```mermaid
@@ -350,7 +382,7 @@ Run all tests with:
 python3 -m pytest
 ```
 
-The current suite contains 70 tests covering the original scorer, validated
+The current suite contains 95 tests covering the original scorer, validated
 contracts, compatibility, normalization, malformed input, 200-track balance,
 legacy preservation, retrieval-metadata integrity, schema drift, new-genre
 service behavior, non-mutation, TF-IDF retrieval relevance, provenance, hard
@@ -358,9 +390,12 @@ filters, determinism, tie-breaking, no-signal queries, index fingerprinting,
 and — new in Feature 3b — context-guide loading and validation, guide-driven
 query expansion, expansion provenance, the dominance threshold, the
 guides-as-evidence-not-recommendations rule, a fingerprint that covers both
-sources' content and the expansion settings, and — new in Feature 4 — the
-embedding cache, semantic and hybrid retrieval, the exact blend math, honest
-`DEGRADED` fallback, and the query cache. Every test runs fully offline (no key).
+sources' content and the expansion settings; new in Feature 4 — the embedding
+cache, semantic and hybrid retrieval, the exact blend math, honest `DEGRADED`
+fallback, and the query cache; and — new in Phase 4 — the input/privacy guard
+(PII/secret redaction, injection stripping, crisis → safe response), the
+deterministic intent parser, and the `MusicCompanion` (recommend / clarify /
+no-match / safe / sensitive-stays-local). Every test runs fully offline (no key).
 
 ---
 
@@ -613,9 +648,11 @@ case-insensitive matching) fixes the ranking-level failures:
   assumptions.
 - The 200 tracks are fictional and their numeric values are not measured audio
   properties.
-- The public request path does not yet understand natural language; the Feature 3
-  retriever is a standalone component, and adding a `query` field before the
-  intent/privacy guard exists would misrepresent the application's capability.
+- Natural language is now accepted through the `MusicCompanion` (guarded and
+  parsed first), but the intent parser is rule-based: it understands the known
+  genre/mood vocabulary and filter cues, and leans on retrieval for everything
+  else. The guard is a coarse regex net that can over-redact or miss novel
+  phrasings, and its crisis detector is conservative — not a substitute for help.
 - Semantic quality depends on the real embedding cache (a rotated key runs
   `scripts/build_embeddings.py`); without it the hybrid degrades to lexical
   TF-IDF and labels the result `DEGRADED`. The test-time `FakeEmbedder` captures

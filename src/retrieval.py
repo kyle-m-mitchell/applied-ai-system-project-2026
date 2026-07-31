@@ -38,7 +38,16 @@ from src.contracts import (
     RetrievalResult,
     SourceType,
 )
-from src.embeddings import EMBEDDING_DIM, EMBEDDING_MODEL, EmbeddingCache, Embedder, cosine
+from src.embeddings import (
+    EMBEDDING_DIM,
+    EMBEDDING_MODEL,
+    CachedQueryEmbedder,
+    Embedder,
+    EmbeddingCache,
+    cosine,
+    load_embedding_cache,
+    load_query_cache,
+)
 
 
 # Descriptor fields joined into one retrieval document per track. Title and
@@ -707,3 +716,43 @@ class HybridRetriever(Retriever):
             expanded_query_terms=expansion_terms,
             operating_mode=OperatingMode.GEMINI,
         )
+
+
+def build_default_retriever(
+    tracks: Sequence[CatalogTrack],
+    guides: Sequence[ContextGuide] = (),
+    *,
+    catalog_cache_path: str | None = None,
+    query_cache_path: str | None = None,
+    live_embedder: Embedder | None = None,
+) -> Retriever:
+    """Return the best retriever available: hybrid if a usable committed
+    embedding cache exists, otherwise the local TF-IDF retriever.
+
+    Cached example-query vectors keep the hybrid reproducible offline; a
+    ``live_embedder`` (when a key is present) covers novel queries. Any missing
+    or mismatched cache simply falls back to TF-IDF. Shared by the demo, the CLI,
+    and the companion so the "which retriever?" logic lives in one place.
+    """
+    cache = None
+    if catalog_cache_path is not None and Path(catalog_cache_path).exists():
+        try:
+            cache = load_embedding_cache(catalog_cache_path)
+        except Exception:  # noqa: BLE001 - a bad cache just falls back to TF-IDF
+            cache = None
+    if cache is None:
+        return TfidfRetriever(tracks, guides)
+
+    embedder: Embedder | None = None
+    if query_cache_path is not None and Path(query_cache_path).exists():
+        try:
+            query_cache = load_query_cache(query_cache_path)
+            if query_cache.embedding_model == cache.embedding_model:
+                embedder = CachedQueryEmbedder(query_cache, fallback=live_embedder)
+        except Exception:  # noqa: BLE001
+            embedder = None
+    if embedder is None and live_embedder is not None and live_embedder.model_id == cache.embedding_model:
+        embedder = live_embedder
+    if embedder is None:
+        return TfidfRetriever(tracks, guides)
+    return HybridRetriever(tracks, embedder, cache, guides)

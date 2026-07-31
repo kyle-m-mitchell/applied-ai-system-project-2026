@@ -120,10 +120,18 @@ confidence.
 The experiments below were recorded against the original 20-track baseline and
 are preserved because they motivated later changes. They are not current
 200-track acceptance results. The current automated catalog/service/retrieval
-result is `70 passed` (Feature 3 added TF-IDF retrieval tests; Feature 3b added
-context-guide/expansion/fingerprint tests; Feature 4 added embedding, hybrid, and
-fallback tests, all offline); a dedicated AI/RAG evaluation harness with quality
-metrics remains future work.
+result is `95 passed` (Features 3/3b/4 added retrieval, context-guide, and
+embedding/hybrid tests; Phase 4 added input-guard, intent-parser, and companion
+tests, all offline); a dedicated AI/RAG evaluation harness with quality metrics
+remains future work.
+
+**Input-privacy and safety (Phase 4).** Natural-language queries pass through a
+deterministic guard before anything else: it redacts emails, phone numbers, and
+key-like secrets (which are never sent to the provider or logged), strips
+prompt-injection directives, and routes clear crisis language to a brief,
+non-clinical safe response that points to real help. Sensitive queries are
+answered by the local retriever only. The guard is a coarse regex net, not a
+perfect classifier, so it deliberately errs toward redacting or staying local.
 
 ### Everyday profiles I tested
 

@@ -182,12 +182,12 @@ Verification command:
 python -m pytest -q
 ```
 
-Verified result on 2026-07-29 (30 covered the catalog/service on 2026-07-26;
-Feature 3 added 14 retrieval tests, Feature 3b added 13 context-guide/fingerprint
-tests, and Feature 4 added 13 embedding/hybrid/fallback tests, all offline):
+Verified result on 2026-07-30 (Features 3/3b/4 added retrieval, context-guide,
+and embedding/hybrid tests; Phase 4 added 25 guard/intent/companion tests, all
+offline):
 
 ```text
-70 passed
+95 passed
 ```
 
 ## Human review protocol
