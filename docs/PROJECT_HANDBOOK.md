@@ -36,13 +36,13 @@ Last updated: **2026-07-29**
 | Item | Current state |
 |---|---|
 | Branch | `main`; Features 3, 3b, and 4 are uncommitted — inspect with `git status --short` |
-| Phase | **Feature 4 (Gemini embeddings + hybrid ranking) implemented and tested offline; real embedding cache + human sign-off pending** |
-| Working tree | New: `src/embeddings.py`, `src/retrieval.py`, `tests/test_{retrieval,context_guides,embeddings}.py`, `scripts/{retrieval_demo,build_embeddings}.py`, `data/context_guides/*.md`, `.env.example`, `requirements-embeddings.txt`; edited: `src/contracts.py`, `.gitignore`, docs |
-| Last verified regression check | `70 passed` from `.venv/bin/python -m pytest -q` on 2026-07-29 (fully offline; no key) |
-| Implemented | Original scorer, strict Pydantic contracts, shared service, validated CLI, 200-track catalog, integrity tests, catalog data card, **TF-IDF retriever + curated context guides (query expansion) behind a `Retriever` interface, a Gemini embedding retriever + semantic/lexical hybrid ranking with a committed-cache + deterministic-fake + TF-IDF-fallback design, retrieval/guide/embedding tests, before/after demo**, target Mermaid architecture |
-| In progress | Real embedding-cache generation (needs a rotated key); human review of catalog records and AI-drafted context-guide wording |
+| Phase | **Feature 4 (Gemini embeddings + hybrid ranking) implemented, tested offline, and validated against the real API; human sign-off pending** |
+| Working tree | New: `src/embeddings.py`, `src/retrieval.py`, `tests/test_{retrieval,context_guides,embeddings}.py`, `scripts/{retrieval_demo,build_embeddings}.py`, `data/context_guides/*.md`, `data/embeddings/{catalog,queries}.json` (real committed vectors), `.env.example`; edited: `src/contracts.py`, `requirements.txt`, `.gitignore`, docs |
+| Last verified regression check | `70 passed` from `.venv/bin/python -m pytest -q` on 2026-07-29 (fully offline; no key). Real cache built 2026-07-30 |
+| Implemented | Original scorer, strict Pydantic contracts, shared service, validated CLI, 200-track catalog, integrity tests, catalog data card, **TF-IDF retriever + curated context guides (query expansion) behind a `Retriever` interface, a Gemini embedding retriever + semantic/lexical hybrid ranking with a committed-cache + deterministic-fake + TF-IDF-fallback design, real committed `gemini-embedding-2` vectors, retrieval/guide/embedding tests, before/after demo**, target Mermaid architecture |
+| In progress | Human review of catalog records and AI-drafted context-guide wording; rotating the exposed API key |
 | Not implemented yet | Natural-language intent parsing, input/privacy guard, bounded agent, companion response policy, UI, session feedback, AI event logs, evaluation harness |
-| Next action | Generate + commit the real embedding cache (`scripts/build_embeddings.py` with a git-ignored key); then Phase 4 (input/privacy guard + intent parser), which finally lets a natural-language `query` reach the retrievers through the public path |
+| Next action | Phase 4 (input/privacy guard + intent parser), which finally lets a natural-language `query` reach the retrievers through the public path; complete human sign-off; rotate the pasted key |
 
 ### Current implementation boundary
 
@@ -256,7 +256,7 @@ product useful, testable, free to demo, and honest during provider failures.
 | Gate guide expansion with a dominance threshold (≥ 0.5 × top guide score) | Drops weak, spurious guide matches that would otherwise inject off-topic expansion terms | Implemented |
 | Use real Gemini embeddings but keep the system reproducible via a committed cache + deterministic fake + TF-IDF fallback | Gemini is the tool that *builds* a reproducible artifact; the committed vectors and offline fallback are what make it portable and testable with no key | Implemented |
 | Feature 4 hybrid blends semantic + lexical (not yet the 55/35/10) | The numeric-scorer and feedback weights need the Phase 4 intent parser and Phase 6 memory; dense+sparse is the buildable blend now, with configurable weights | Implemented |
-| Keep `google-genai` an optional, lazily imported dependency | Core, tests, and fallback must run with the package absent (and dodge Python-3.14 wheel risk) | Implemented |
+| Call the Gemini REST embeddings endpoint with the standard library (`urllib`), not the `google-genai` SDK | Zero third-party dependencies; the SDK's `cryptography` dep has no Python-3.14 wheel and needs Rust/OpenSSL to build. REST is a plain HTTPS POST, fits the project's zero-dependency ethos, and runs on 3.14 | Implemented |
 | Read the API key only from `GEMINI_API_KEY` (git-ignored `.env`); never log or commit it | A live provider must not turn observability or version control into a secret leak | Implemented |
 | Keep the `Retriever` standalone — no natural-language `query` in the public request yet | The app must not accept inputs it cannot responsibly process; NL entry waits for the Phase 4 privacy guard + intent parser | Active |
 | Start hybrid ranking at 55/35/10 | Semantic relevance leads, original content score anchors behavior, session feedback personalizes modestly | Hypothesis to evaluate, not a final fact |
@@ -275,7 +275,7 @@ demonstrable without a paid API or network access.
 | Runtime contracts | Pydantic 2 | Strict schemas and useful validation errors | Implemented |
 | Unit/integration tests | pytest | Small, readable tests and fixtures | Implemented |
 | Web UI | Streamlit | Fast Python-only interactive demo with session state | Declared; UI planned |
-| Gemini access | Official Google Gen AI Python SDK (`google-genai`) | Official adapter, structured outputs, function calls, embeddings | Implemented for embeddings as an **optional, lazily imported** dependency (`requirements-embeddings.txt`, ~2.13.0); core/tests never import it |
+| Gemini access | Direct REST call with the Python standard library (`urllib`) | Zero third-party dependency; the `google-genai` SDK's `cryptography` dep has no Python-3.14 wheel. Embeddings are a simple HTTPS POST | Implemented for embeddings (stdlib REST); structured output/function calling will be revisited when the agent phase needs them |
 | Structured intent/voice | `gemini-3.5-flash-lite` | Current stable low-cost/free-tier candidate for structured tasks | Planned |
 | Hosted embeddings | `gemini-embedding-2` reduced to 768 dimensions | Current stable semantic model; 768 is an officially recommended dimension | Implemented (committed vector cache + deterministic fake for tests + TF-IDF fallback) |
 | Offline retrieval | **Pure-Python standard-library TF-IDF + cosine** (scikit-learn not used) | Deterministic, inspectable, no API/vector database, no new dependency, no Python-3.14 wheel risk; scikit-learn was overkill for 200 short docs | Implemented |
@@ -325,14 +325,18 @@ Research verified on **2026-07-26**:
 - Gemini 3.5 Flash-Lite currently ignores or deprecates temperature-style
   controls. Cadence’s voice should come from a voice card, system instruction,
   few-shot examples, and output evaluation—not a temperature setting.
-- Use the official `google-genai` SDK, not the legacy
-  `google-generativeai` package.
+- The official `google-genai` SDK is the future path for structured output and
+  function calling, but for **embeddings** we call the REST endpoint directly with
+  the standard library. The SDK pulls in `cryptography`, which has no Python-3.14
+  wheel and fails to build without Rust/OpenSSL on this machine; the REST API
+  needs no third-party package. Revisit the SDK (in a Python-3.12 env) only if a
+  later phase needs its structured-output/function-calling helpers.
 
 Current package snapshot from official package indexes on the research date:
 
 | Package | Researched stable version | Minimum Python | Role |
 |---|---:|---:|---|
-| `google-genai` | 2.13.0 | 3.10 | Gemini provider adapter |
+| `google-genai` | 2.13.0 | 3.10 | Gemini SDK — **not installed**; embeddings use stdlib REST (its `cryptography` dep has no 3.14 wheel) |
 | `scikit-learn` | 1.9.0 | 3.11 | TF-IDF and cosine similarity |
 | `pydantic` | 2.13.4 | 3.9 | Contracts and validation |
 | `pytest` | 9.1.1 | 3.10 | Tests and evaluation harness |
@@ -509,14 +513,13 @@ before/after improvement over the original scorer for context-rich requests.
 - [x] `EmbeddingRetriever` (semantic) and `HybridRetriever` (semantic+lexical blend, configurable weights) behind the same `Retriever` interface.
 - [x] Committed embedding cache keyed on catalog content + model + dimension; loader detects a stale/mismatched cache.
 - [x] Honest fallback: missing/stale cache or a provider error → TF-IDF, `operating_mode=DEGRADED`; real semantic path is `GEMINI`.
-- [x] Reproducibility: `google-genai` is optional and lazily imported; the full suite (`70 passed` on 2026-07-29) and the fallback run with **no key**; the demo reproduces offline from committed track + query caches.
+- [x] Reproducibility: no third-party dependency (Gemini via stdlib REST); the full suite (`70 passed` on 2026-07-29) and the fallback run with **no key**; the demo reproduces offline from committed track + query caches.
 - [x] Secret handling: key only from `GEMINI_API_KEY` (git-ignored `.env`), never logged or committed; `.env.example` provided.
 - [x] `recommend()` path and the public request contract unchanged (still no NL `query` field).
-- [ ] Real embedding cache generated and committed (`scripts/build_embeddings.py` with a rotated key) and a real paraphrase before/after recorded.
+- [x] Real embedding cache generated and committed (`data/embeddings/`, 200 track vectors + 5 example queries, `gemini-embedding-2` @ 768-d). Real paraphrase before/after recorded: `"tunes for cramming before an exam"` returns lofi study tracks at `sem 0.70+` with `lex 0.000` (zero shared words) — a match TF-IDF and guides both miss.
 
-**Still pending in Phase 3:** the real committed cache (above); session feedback
-as a third source (Phase 6); and a before/after retrieval metric in the
-evaluation harness.
+**Still pending in Phase 3:** session feedback as a third source (Phase 6); and a
+quantitative before/after retrieval metric in the evaluation harness.
 
 ### Phase 4 — input/privacy guard and structured intent
 
@@ -753,7 +756,9 @@ Open decisions:
 | 2026-07-27 | Store context guides as one Markdown file per situation | Human-authored, diffable, curator-reviewable; the file stem is the guide id and the first heading is the title |
 | 2026-07-29 | Feature 4: real Gemini embeddings, made reproducible by a committed vector cache + deterministic fake + TF-IDF fallback | Lets the project use a live AI without depending on it — tests and demos run with no key, results stay portable |
 | 2026-07-29 | Hybrid ranking blends semantic + lexical only for now (configurable weights) | The numeric-scorer/feedback weights await Phase 4/6; dense+sparse is the honest blend the current inputs support |
-| 2026-07-29 | `google-genai` optional/lazy; key from a git-ignored `.env` only | Keeps the core installable and testable without the SDK or a key, and keeps secrets out of code, logs, and version control |
+| 2026-07-29 | Embeddings call the Gemini REST API via stdlib `urllib` (no `google-genai` SDK); key from a git-ignored `.env` only | The SDK's `cryptography` dep has no Python-3.14 wheel and fails to build without Rust/OpenSSL; REST needs no third-party package. Keeps secrets out of code, logs, and version control |
+| 2026-07-30 | Add `certifi` (pure-Python CA bundle) with a system-trust fallback | The python.org 3.14 build has no usable system trust store, so `urllib` TLS verification fails; `certifi` fixes it with no compilation |
+| 2026-07-30 | Embed one document per `embedContent` call (not sync batch); throttle + backoff + resumable incremental cache | `gemini-embedding-2` exposes single `embedContent` and `asyncBatchEmbedContent`, not sync `batchEmbedContents`; free-tier RPM returns 429, so the build throttles, backs off, and saves progress to resume |
 
 ## Commands for the next developer
 
@@ -819,9 +824,9 @@ guides (Feature 3b), and Gemini embeddings + hybrid ranking (Feature 4), all
 behind one `Retriever` interface with an honest TF-IDF fallback. Next:
 
 1. **Generate the real embedding cache.** Rotate the pasted key, put it in a
-   git-ignored `.env`, `pip install -r requirements-embeddings.txt` (Python 3.12
-   recommended), run `python scripts/build_embeddings.py`, commit
-   `data/embeddings/`, and record a real paraphrase before/after.
+   git-ignored `.env`, run `python scripts/build_embeddings.py` (no extra packages
+   — stdlib REST, runs on 3.14), commit `data/embeddings/`, and record a real
+   paraphrase before/after.
 2. **Human sign-off** remains outstanding — the catalog representative/outlier
    review in `docs/CATALOG_DATA_CARD.md`, plus the AI-drafted context-guide wording.
 3. **Phase 4** (input/privacy guard + intent parser) is what finally lets a

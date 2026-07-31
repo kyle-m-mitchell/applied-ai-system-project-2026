@@ -2,3 +2,7 @@ pandas
 pytest
 pydantic>=2.13.4,<3
 streamlit
+# certifi: pure-Python CA bundle used only by the optional Gemini embedding path
+# for TLS verification (some Pythons ship without a usable system trust store).
+# The code falls back to the system default if it is absent; no compilation.
+certifi

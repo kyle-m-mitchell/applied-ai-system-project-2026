@@ -204,8 +204,10 @@ The design keeps a live API from hurting reproducibility:
 - **Honest fallback.** No key, no cache, or a provider error → the hybrid
   degrades to TF-IDF and labels the result `DEGRADED` (via `operating_mode`),
   never pretending semantic ran.
-- **Optional, lazy dependency.** `google-genai` is imported only on the real
-  path (`requirements-embeddings.txt`), so the core installs and tests without it.
+- **Almost no dependency.** The real embedder calls the Gemini REST API with the
+  Python standard library (`urllib`) — no SDK to compile — plus `certifi` (a
+  pure-Python CA bundle) for TLS verification, with a fallback to the system
+  trust store. It runs on any supported Python, including 3.14.
 
 The key is read only from `GEMINI_API_KEY` in a git-ignored `.env` — never code,
 logs, or commits.
@@ -330,11 +332,11 @@ file is the authoritative submission artifact.
    Retrieval needs no dependencies beyond the standard library. Without an
    embedding cache the semantic panel honestly degrades to TF-IDF.
 
-5. *(Optional)* Enable the real semantic path with a Gemini key:
+5. *(Optional)* Enable the real semantic path with a Gemini key (no extra
+   packages — the embedder uses only the standard library):
 
    ```bash
    cp .env.example .env            # then paste your key into .env (git-ignored)
-   pip install -r requirements-embeddings.txt
    python3 scripts/build_embeddings.py   # writes data/embeddings/, then commit it
    ```
 
@@ -474,6 +476,22 @@ as evidence rather than shown as a recommendation. Catalog-only retrieval also
 reaches matches no single-genre request could — `"rainy day melancholy piano"`
 surfaces blues, r&b, and classical tracks together, each with the `matched_terms`
 that justify it.
+
+Feature 4's embeddings go further — matching *meaning* with **zero shared words**.
+For `"tunes for cramming before an exam"`, TF-IDF finds only weak, wrong matches
+(no track says "cram" or "exam"), but the hybrid surfaces the right lofi study
+tracks on semantic similarity alone:
+
+```
+PLUS  - semantic + lexical hybrid  (mode: gemini)
+  #  9  Focus Flow      [lofi]  score 0.430  (sem 0.716 | lex 0.000)
+  # 30  Blue Desk Lamp  [lofi]  score 0.428  (sem 0.713 | lex 0.000)
+  # 31  Quiet Deadline  [lofi]  score 0.424  (sem 0.707 | lex 0.000)
+```
+
+`lex 0.000` with `sem 0.7+` is the whole point: the embedding understood
+"cramming for an exam" ≈ studying. Real Gemini vectors, served from the committed
+cache so this reproduces with no key.
 
 ---
 

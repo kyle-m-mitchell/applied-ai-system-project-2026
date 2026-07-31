@@ -12,8 +12,9 @@ Reproducibility is the governing concern. A live API is non-portable, so:
   the catalog content plus the embedding model and dimension;
 * tests and the fallback use the deterministic ``FakeEmbedder`` and never touch
   the network;
-* the ``google-genai`` SDK is imported lazily, only inside ``GeminiEmbedder``, so
-  the rest of the system runs with the package absent.
+* the real embedder calls the Gemini REST API with the Python standard library
+  (``urllib``) plus ``certifi`` for TLS certificate verification, so there is no
+  SDK to compile and it runs on any supported Python.
 """
 
 from __future__ import annotations
@@ -23,6 +24,10 @@ import json
 import math
 import os
 import re
+import ssl
+import time
+import urllib.error
+import urllib.request
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -58,6 +63,21 @@ def normalize(vector: Sequence[float]) -> Vector:
 def cosine(a: Sequence[float], b: Sequence[float]) -> float:
     """Cosine similarity of two dense vectors (exact dot product if normalized)."""
     return sum(x * y for x, y in zip(a, b))
+
+
+def _make_ssl_context() -> ssl.SSLContext:
+    """Build a TLS context, preferring certifi's CA bundle when available.
+
+    Some Python builds (notably the python.org macOS installers) ship without a
+    usable system CA bundle, so a plain default context fails verification.
+    ``certifi`` is a pure-Python bundle (no compilation), used only if present.
+    """
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:  # noqa: BLE001 - fall back to the system default context
+        return ssl.create_default_context()
 
 
 class Embedder(ABC):
@@ -110,56 +130,82 @@ class FakeEmbedder(Embedder):
 
 
 class GeminiEmbedder(Embedder):
-    """Real embedder backed by Gemini via the ``google-genai`` SDK.
+    """Real embedder calling the Gemini REST API with the standard library.
 
-    The SDK and API key are touched lazily so importing this module never
-    requires either. Matryoshka vectors truncated to ``dimension`` are
-    re-normalized, and the key and prompt text are never logged.
+    No third-party SDK: a plain HTTPS POST to the embeddings endpoint. Matryoshka
+    vectors truncated to ``dimension`` are re-normalized, and the key is sent in a
+    header (never a URL) and never logged.
+
+    Embedding 2 takes retrieval intent as an in-text instruction rather than a
+    task-type field. Model id, endpoint, and payload shape drift over time; verify
+    them against the current API docs before relying on live output. Any failure
+    raises, and the retriever degrades to TF-IDF.
     """
+
+    BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
     def __init__(
         self,
         api_key: str | None = None,
         model_id: str = EMBEDDING_MODEL,
         dimension: int = EMBEDDING_DIM,
+        *,
+        timeout: float = 30.0,
+        request_delay: float = 0.0,
+        max_retries: int = 5,
     ) -> None:
         self.model_id = model_id
         self.dimension = dimension
+        self._timeout = timeout
+        self._request_delay = request_delay  # gentle throttle to stay under RPM
+        self._max_retries = max_retries
         self._api_key = api_key or os.environ.get("GEMINI_API_KEY")
         if not self._api_key:
             raise RuntimeError(
                 "GEMINI_API_KEY is not set; provide a key via the environment "
                 "(a git-ignored .env), never in code."
             )
-        self._client = None  # created on first use
+        self._ssl_context = _make_ssl_context()
 
-    def _client_lazy(self):
-        if self._client is None:
-            from google import genai  # imported only on the real path
+    def _post(self, method: str, payload: dict) -> dict:
+        """POST JSON to a model method, retrying on rate limits with backoff."""
+        url = f"{self.BASE_URL}/models/{self.model_id}:{method}"
+        body = json.dumps(payload).encode("utf-8")
+        for attempt in range(self._max_retries + 1):
+            request = urllib.request.Request(url, data=body, method="POST")
+            request.add_header("Content-Type", "application/json")
+            request.add_header("x-goog-api-key", self._api_key)  # key in header, not URL
+            try:
+                with urllib.request.urlopen(
+                    request, timeout=self._timeout, context=self._ssl_context
+                ) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:  # never leak the key or request text
+                retriable = exc.code in (429, 500, 503)
+                if retriable and attempt < self._max_retries:
+                    time.sleep(min(2**attempt, 30))  # 1, 2, 4, 8, 16 seconds
+                    continue
+                raise RuntimeError(f"Gemini embedding request failed: HTTP {exc.code}") from exc
+        raise RuntimeError("Gemini embedding request failed after retries")
 
-            self._client = genai.Client(api_key=self._api_key)
-        return self._client
-
-    def _embed(self, texts: Sequence[str], intent: str) -> tuple[Vector, ...]:
-        from google.genai import types
-
-        client = self._client_lazy()
-        # Embedding 2 takes retrieval intent as in-text instruction rather than a
-        # task_type field. Verify the exact request shape against the current API
-        # docs before relying on live output.
-        contents = [f"task: {intent} | {text}" for text in texts]
-        response = client.models.embed_content(
-            model=self.model_id,
-            contents=contents,
-            config=types.EmbedContentConfig(output_dimensionality=self.dimension),
-        )
-        return tuple(normalize(tuple(item.values)) for item in response.embeddings)
+    def _embed_one(self, text: str) -> Vector:
+        # The model exposes single embedContent (not sync batch), so we call once
+        # per text. Raw text is embedded; task-type optimization is a later refinement.
+        if self._request_delay:
+            time.sleep(self._request_delay)
+        payload = {
+            "model": f"models/{self.model_id}",
+            "content": {"parts": [{"text": text}]},
+            "outputDimensionality": self.dimension,
+        }
+        data = self._post("embedContent", payload)
+        return normalize(tuple(data["embedding"]["values"]))
 
     def embed_documents(self, texts: Sequence[str]) -> tuple[Vector, ...]:
-        return self._embed(texts, "search document")
+        return tuple(self._embed_one(text) for text in texts)
 
     def embed_query(self, text: str) -> Vector:
-        return self._embed([text], "search query")[0]
+        return self._embed_one(text)
 
 
 @dataclass(frozen=True)
