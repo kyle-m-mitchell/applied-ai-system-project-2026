@@ -244,6 +244,43 @@ python -m src.main                  # -> the original structured scorer, unchang
 Natural language enters through `MusicCompanion`, not a `query` field on the
 structured `RecommendationRequest` — the trusted scorer path stays pure.
 
+### The bounded agent and Cadence's voice (Phase 5)
+
+`MusicCompanion` is a **bounded agent**: guard → intent → retrieve → **MMR
+diversity** → **grounding evaluator** → **Cadence's voice**, choosing from a small
+allowlist of actions and emitting a **privacy-safe trace**.
+
+- **MMR diversity** ([`src/ranking.py`](src/ranking.py)) keeps the top-k from being
+  five near-duplicates; relevance still leads.
+- **Grounding evaluator** ([`src/evaluator.py`](src/evaluator.py)) verifies every
+  recommended track is real, unique, constraint-respecting, and evidenced — and
+  that a generated message names **only** retrieved tracks.
+- **Cadence** ([`src/voice.py`](src/voice.py), voice card in
+  [`docs/CADENCE_VOICE.md`](docs/CADENCE_VOICE.md)) is a warm fictional DJ. A
+  deterministic template voice is the always-available baseline; an optional Gemini
+  renderer writes only the warm *framing* (it names no songs — the app does), and
+  anything that fails the grounding check falls back to the template. Cadence never
+  claims to have heard a track or to be human.
+
+```bash
+python -m src.main "clean chill beats for studying, no vocals"
+```
+```
+🎧  You asked: "clean chill beats for studying, no vocals"
+
+Here is a wordless mix of clean, steady instrumental textures designed to keep
+your mind anchored through a long study session.
+1. Cloudy Bookmark — Mosslight [lofi · chill] — a close match in feel
+2. Digital Raincoat — Future Polaroid [synthwave · chill] — a close match in feel
+3. No Horizon — Pale Current [ambient · chill] — a close match in feel
+...
+[recommend]  ·  mode: gemini  ·  voice: gemini  ·  diversified
+```
+
+Add `--trace` to print the full `AgentTrace`. With no key, Cadence still replies
+in the deterministic voice (`voice: template`), and sensitive queries always do —
+they reach neither the retrieval nor the language provider.
+
 ### Original scoring diagram
 
 ```mermaid
@@ -382,7 +419,7 @@ Run all tests with:
 python3 -m pytest
 ```
 
-The current suite contains 95 tests covering the original scorer, validated
+The current suite contains 113 tests covering the original scorer, validated
 contracts, compatibility, normalization, malformed input, 200-track balance,
 legacy preservation, retrieval-metadata integrity, schema drift, new-genre
 service behavior, non-mutation, TF-IDF retrieval relevance, provenance, hard
@@ -395,7 +432,11 @@ cache, semantic and hybrid retrieval, the exact blend math, honest `DEGRADED`
 fallback, and the query cache; and — new in Phase 4 — the input/privacy guard
 (PII/secret redaction, injection stripping, crisis → safe response), the
 deterministic intent parser, and the `MusicCompanion` (recommend / clarify /
-no-match / safe / sensitive-stays-local). Every test runs fully offline (no key).
+no-match / safe / sensitive-stays-local); and — new in Phase 5 — MMR diversity,
+the grounding evaluator (ids, constraints, evidence, and invented-song detection),
+Cadence's voice (deterministic + a stubbed generator, with fallback on
+ungrounded/failed generation), and the privacy-safe agent trace. Every test runs
+fully offline (no key).
 
 ---
 

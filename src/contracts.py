@@ -341,14 +341,47 @@ class CompanionAction(str, Enum):
     DEGRADED = "degraded"
 
 
+class VoiceSource(str, Enum):
+    """Which renderer produced the companion's message."""
+
+    TEMPLATE = "template"  # deterministic, reproducible, always available
+    GEMINI = "gemini"  # provider-generated, grounded and output-guarded
+
+
+class EvaluationReport(ContractModel):
+    """The grounding evaluator's verdict on a result or a rendered message."""
+
+    ok: bool
+    failures: tuple[str, ...] = ()
+
+
+class AgentTrace(ContractModel):
+    """A structured, privacy-safe record of one bounded-agent turn.
+
+    It captures categories, ids, and decisions — never raw sensitive text — so a
+    reviewer can see how the companion reached its answer.
+    """
+
+    guard_category: GuardCategory
+    intent_summary: str = ""
+    retrieved_ids: tuple[int, ...] = ()
+    diversity_applied: bool = False
+    evaluation: EvaluationReport = EvaluationReport(ok=True)
+    action: CompanionAction
+    voice_source: VoiceSource = VoiceSource.TEMPLATE
+    fallback_reason: str | None = None
+
+
 class CompanionResponse(ContractModel):
     """Validated response from the natural-language companion.
 
     ``retrieval`` reuses the retriever's own result (hits, provenance, operating
     mode, guide evidence); it is ``None`` for clarify/safe/empty outcomes.
+    ``trace`` is the bounded-agent record of how the answer was produced.
     """
 
     action: CompanionAction
     message: str
     retrieval: RetrievalResult | None = None
     intent: MusicIntent | None = None
+    trace: AgentTrace | None = None

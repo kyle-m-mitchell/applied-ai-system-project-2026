@@ -81,6 +81,18 @@ def _live_embedder():
         return None
 
 
+def _text_generator():
+    """A live Gemini text generator for Cadence's voice if a key is present."""
+    if not os.environ.get("GEMINI_API_KEY"):
+        return None
+    try:
+        from src.generation import GeminiTextGenerator
+
+        return GeminiTextGenerator()
+    except Exception:  # noqa: BLE001 - any setup failure means "no live voice"
+        return None
+
+
 def _build_companion(catalog, guides) -> MusicCompanion:
     default = build_default_retriever(
         catalog,
@@ -89,32 +101,34 @@ def _build_companion(catalog, guides) -> MusicCompanion:
         query_cache_path=str(QUERY_CACHE),
         live_embedder=_live_embedder(),
     )
-    return MusicCompanion(catalog, guides, default_retriever=default)
+    return MusicCompanion(
+        catalog, guides, default_retriever=default, generator=_text_generator()
+    )
 
 
-def print_companion_response(query: str, response: CompanionResponse) -> None:
-    """Print a natural-language companion response with evidence."""
+def print_companion_response(
+    query: str, response: CompanionResponse, *, show_trace: bool = False
+) -> None:
+    """Print Cadence's voiced response plus a compact, privacy-safe trace line."""
     print(f'\n🎧  You asked: "{query}"\n')
-    print(f"Cadence [{response.action.value}]: {response.message}")
+    print(response.message)
+
+    trace = response.trace
     result = response.retrieval
-    if result is None:
-        return
-    print(f"Operating mode: {result.operating_mode.value}")
-    print(DIVIDER)
-    for rank, hit in enumerate(result.hits, start=1):
-        track = hit.track
-        print(f"{rank}. {track.title} — {track.artist}  [{track.genre} · {track.mood}]")
-        why = []
-        if hit.semantic_score is not None:
-            why.append(f"semantic {hit.semantic_score:.2f}")
-        if hit.lexical_score is not None:
-            why.append(f"lexical {hit.lexical_score:.2f}")
-        if hit.matched_terms:
-            why.append("matched: " + ", ".join(hit.matched_terms[:4]))
-        print(f"   score {hit.score:.3f}" + (("  ·  " + "  ·  ".join(why)) if why else ""))
-        print(DIVIDER)
-    for guide in result.guides_used:
-        print(f"context guide: {guide.title} → added {', '.join(guide.expansion_terms)}")
+    meta = f"[{response.action.value}]"
+    if result is not None:
+        meta += f"  ·  mode: {result.operating_mode.value}"
+    if trace is not None:
+        meta += f"  ·  voice: {trace.voice_source.value}"
+        if trace.diversity_applied:
+            meta += "  ·  diversified"
+    print("\n" + meta)
+
+    if result is not None:
+        for guide in result.guides_used:
+            print(f"context guide: {guide.title} → added {', '.join(guide.expansion_terms)}")
+    if show_trace and trace is not None:
+        print("trace: " + str(trace.model_dump()))
 
 
 def run_structured_demo() -> None:
@@ -134,13 +148,15 @@ def run_structured_demo() -> None:
 
 
 def main() -> None:
-    if len(sys.argv) > 1:
+    args = [arg for arg in sys.argv[1:] if arg != "--trace"]
+    show_trace = "--trace" in sys.argv[1:]
+    if args:
         _load_dotenv()
-        query = " ".join(sys.argv[1:])
+        query = " ".join(args)
         catalog = RecommendationService(load_songs(str(CATALOG_PATH))).catalog
         guides = load_context_guides(str(GUIDES_DIR))
         companion = _build_companion(catalog, guides)
-        print_companion_response(query, companion.respond(query))
+        print_companion_response(query, companion.respond(query), show_trace=show_trace)
     else:
         run_structured_demo()
 

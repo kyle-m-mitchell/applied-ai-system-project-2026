@@ -35,14 +35,14 @@ Last updated: **2026-07-30**
 
 | Item | Current state |
 |---|---|
-| Branch | `main`; Features 3, 3b, 4, and Phase 4 are uncommitted — inspect with `git status --short` |
-| Phase | **Phase 4 (natural-language input/privacy guard + deterministic intent parser) implemented and tested; wired through the public CLI; human sign-off pending** |
-| Working tree | New: `src/{guard,intent,companion,embeddings,retrieval}.py`, `tests/test_{guard,intent,companion,retrieval,context_guides,embeddings}.py`, `scripts/{retrieval_demo,build_embeddings}.py`, `data/context_guides/*.md`, `data/embeddings/{catalog,queries}.json`, `.env.example`; edited: `src/{contracts,main}.py`, `requirements.txt`, `.gitignore`, docs |
-| Last verified regression check | `95 passed` from `.venv/bin/python -m pytest -q` on 2026-07-30 (fully offline; no key) |
-| Implemented | Original scorer, strict Pydantic contracts, shared service, 200-track catalog, integrity tests, catalog data card, TF-IDF retriever + context guides (query expansion), Gemini embedding retriever + semantic/lexical hybrid ranking (committed cache + fake + TF-IDF fallback), real `gemini-embedding-2` vectors, **an input/privacy guard (PII/secret redaction, prompt-injection stripping, crisis safe-response) + a deterministic intent parser + a bounded `MusicCompanion` that finally accepts natural language through the CLI**, full test suite, before/after demos, target Mermaid architecture |
-| In progress | Human review of catalog records and AI-drafted context-guide wording; rotating the exposed API key |
-| Not implemented yet | Gemini structured intent; the full bounded-agent state machine + Cadence persona/voice (Phase 5); Streamlit UI; session feedback; AI event logs; evaluation harness |
-| Next action | Phase 5 (bounded agent + Cadence voice/persona over the companion's actions), and/or a Gemini structured-intent parser behind the same `IntentParser` shape; complete human sign-off; rotate the pasted key |
+| Branch | `main`; Features 3–4 and Phases 4–5 are uncommitted — inspect with `git status --short` |
+| Phase | **Phase 5 (bounded agent + grounding evaluator + MMR diversity + Cadence's voice) implemented and tested; live voice validated against the real API; human sign-off pending** |
+| Working tree | New this phase: `src/{ranking,evaluator,generation,voice}.py`, `tests/test_{ranking,evaluator,voice}.py`, `docs/CADENCE_VOICE.md`; edited: `src/{contracts,companion,main}.py`, `tests/test_companion.py`, `ai_interactions.md`, docs. (Plus all Features 3–4 / Phase 4 files.) |
+| Last verified regression check | `113 passed` from `.venv/bin/python -m pytest -q` on 2026-07-30 (fully offline; no key) |
+| Implemented | Original scorer, contracts, service, 200-track catalog, catalog data card, TF-IDF + context-guide retrieval, Gemini embeddings + hybrid ranking (committed cache + fake + fallback), input/privacy guard + deterministic intent parser, **a bounded `MusicCompanion` agent with a privacy-safe trace, MMR diversity, a grounding evaluator, and Cadence's voice (deterministic baseline + optional grounded Gemini renderer, output-guarded) — wired through the CLI**, full offline test suite, before/after demos, Mermaid architecture |
+| In progress | Human review of catalog records, AI-drafted context-guide wording, and the `ai_interactions.md`/voice-card drafts |
+| Not implemented yet | Gemini structured intent; Streamlit UI + session feedback/memory (Phase 6); privacy-safe JSONL logging + evaluation harness (Phase 7) |
+| Next action | Phase 6 (Streamlit UI + session feedback) or Phase 7 (JSONL logging + evaluation harness); optional Gemini structured-intent parser; complete human sign-off |
 
 ### Current implementation boundary
 
@@ -78,15 +78,15 @@ remaining small enough to explain and operate reliably.
 | Rubric area | Points | Planned evidence | Status |
 |---|---:|---|---|
 | Original project and scope | 3 | README and model card describe the 20-track deterministic baseline | Implemented; wording needs final refresh |
-| Substantial integrated AI feature | 3 | Natural-language request changes retrieval, ranking, and grounded response through the shared service | Planned |
+| Substantial integrated AI feature | 3 | Natural-language request changes retrieval, ranking, and grounded response through the shared service | Implemented (guard → intent → hybrid retrieval → grounded Cadence response via the CLI) |
 | Mermaid architecture | 3 | `diagrams/architecture.mmd`, plus optional rendered preview | Target source implemented; synchronize with final code |
 | End-to-end demonstration | 3 | Streamlit or CLI plus 2–3 reproducible README runs | CLI baseline implemented; AI examples planned |
-| Reliability or guardrail | 3 | Contracts, input/privacy guard, grounded output evaluator, fallback | Contracts implemented; remaining layers planned |
+| Reliability or guardrail | 3 | Contracts, input/privacy guard, grounded output evaluator, fallback | Implemented (contracts, guard, grounding evaluator, and local fallbacks for retrieval and voice) |
 | README and setup | 3 | Goals, installation, run/test commands, sample output | Partially implemented |
 | AI collaboration reflection | 3 | Model card records prompting, debugging, one useful and one flawed suggestion, limits | Planned refresh |
 | Multi-source RAG bonus | +2 | Song records + context guides + session feedback, with before/after evidence | Implemented (two sources: catalog + curated context guides, with guide-driven query expansion and a before/after demo; session feedback is the 3rd source, added in Phase 6) |
-| Agentic workflow bonus | +2 | Bounded steps/tool calls and structured trace in `ai_interactions.md` | Planned |
-| Specialized behavior bonus | +2 | Cadence voice card/few-shot examples and baseline comparison | Planned |
+| Agentic workflow bonus | +2 | Bounded steps/tool calls and structured trace in `ai_interactions.md` | Implemented (bounded `MusicCompanion` with an `AgentTrace`; `ai_interactions.md` drafted) |
+| Specialized behavior bonus | +2 | Cadence voice card/few-shot examples and baseline comparison | Implemented (`docs/CADENCE_VOICE.md` voice card + few-shot; grounded Gemini voice with a deterministic baseline comparison) |
 | Evaluation harness bonus | +2 | Predefined cases and a pass/fail metric summary | Planned |
 
 Required final artifacts also include a 5–7 minute presentation and portfolio
@@ -546,7 +546,7 @@ logged.
 
 ### Phase 5 — bounded agent, evaluator, and Cadence
 
-Status: **Planned**
+Status: **Implemented** (deterministic + optional grounded Gemini voice)
 
 Implement an explicit state machine with allowlisted actions. Hybrid rank
 candidates using the initial 55% semantic, 35% original content, 10% session
@@ -556,6 +556,21 @@ duplicates, constraints, and evidence before Cadence renders a response.
 Done when: recommend, clarify, no-match, safe-response, and degraded paths are
 all reachable and tested; output claims are grounded; provider failure still
 returns a useful labeled result.
+
+**Phase 5 acceptance gate:**
+
+- [x] Bounded agent: `MusicCompanion.respond()` chooses from an allowlist (`recommend / clarify / no_match / safe_response / degraded`) and emits a privacy-safe `AgentTrace` (categories, ids, decisions — never raw sensitive text).
+- [x] MMR diversity (`src/ranking.py`): deterministic re-rank so the top-k isn't near-duplicates; relevance still leads.
+- [x] Grounding evaluator (`src/evaluator.py`): validates ids/dupes/constraints/evidence, and that a generated message quotes only retrieved tracks.
+- [x] Cadence voice (`src/voice.py` + `docs/CADENCE_VOICE.md`): deterministic baseline + optional grounded Gemini renderer that names no songs and passes the grounding check, degrading to the template voice on failure/no-key.
+- [x] Provider text via stdlib REST (`src/generation.py`, `gemini-flash-lite-latest`); sensitive input reaches **neither** the retrieval nor the language provider.
+- [x] Live voice validated: `python -m src.main "clean chill beats for studying, no vocals"` → a grounded Cadence framing + diverse set, `mode: gemini`, `voice: gemini`; a PII query → `mode: local`, `voice: template`.
+- [x] `tests/test_{ranking,evaluator,voice}.py` + companion trace tests pass; full suite `113 passed` on 2026-07-30, fully offline.
+- [x] `ai_interactions.md` drafted (SF8 agentic workflow + SF10 Strategy/Factory pattern).
+
+The 55/35/10 hybrid with the numeric scorer + session feedback remains partial:
+Feature 4's semantic+lexical blend is in place; the scorer/feedback weights await
+structured prefs (this needs the intent parser to emit them) and Phase 6 memory.
 
 ### Phase 6 — Streamlit UI and session feedback
 
@@ -775,6 +790,9 @@ Open decisions:
 | 2026-07-30 | Phase 4: natural language enters through a `MusicCompanion`, not a `query` field on `RecommendationRequest` | Keeps the trusted structured-scorer request pure and sets up Phase 5's bounded agent + Cadence voice; two validated entry points, one catalog |
 | 2026-07-30 | Deterministic rule-based intent parser first (Gemini structured intent deferred behind the same interface) | Reproducible and key-free; the rule parser is the required fallback regardless — same local-first pattern as retrieval |
 | 2026-07-30 | Guard redacts PII/secrets and routes sensitive queries to the local retriever | Sensitive text must never reach the provider or logs; redaction happens before retrieval, and a sensitive query is answered at operating mode `local` |
+| 2026-07-30 | Phase 5 Cadence voice: deterministic renderer + optional grounded Gemini framing; the model never supplies song facts | Earns the specialized-behavior bonus while staying reproducible and hallucination-safe — the app lists the tracks; Cadence only frames them, and the framing is grounding-checked |
+| 2026-07-30 | Sensitive queries reach neither the retrieval nor the language provider | Extends the Phase 4 guarantee: a redacted/local query uses the local retriever and the deterministic voice, never Gemini |
+| 2026-07-30 | MMR diversity via a genre-family similarity proxy (no vectors) | Deterministic, cheap, reuses the scorer's families; keeps the top-k from being five near-duplicates without a heavy re-embedding step |
 
 ## Commands for the next developer
 
@@ -835,18 +853,18 @@ honest.
 
 ## Next action
 
-The full local stack is built and tested offline (`95 passed`): TF-IDF (Feature
-3), context guides (Feature 3b), Gemini embeddings + hybrid ranking (Feature 4,
-with a real committed cache), and now a natural-language front door — guard +
-deterministic intent parser + `MusicCompanion` wired through the CLI (Phase 4).
-Next:
+The full local + provider stack is built and tested offline (`113 passed`):
+retrieval (TF-IDF + context guides), embeddings + hybrid ranking, the
+natural-language guard + intent parser, and now the bounded `MusicCompanion`
+agent — MMR diversity, grounding evaluator, and Cadence's voice (deterministic +
+grounded Gemini), wired through the CLI (Phase 5). Next:
 
-1. **Phase 5 — bounded agent + Cadence.** Formalize the companion's actions
-   (`recommend / clarify / no_match / safe_response / degraded`) into an explicit
-   state machine, add a grounding evaluator over the evidence, and render replies
-   in Cadence's voice (voice card + few-shot, no temperature knob).
-2. **Optional:** a Gemini structured-intent parser behind the same
-   `IntentParser.parse` shape, with the deterministic parser as the fallback.
-3. **Human sign-off** remains outstanding — the catalog representative/outlier
-   review in `docs/CATALOG_DATA_CARD.md`, plus the AI-drafted context-guide
-   wording. **Rotate the pasted API key.**
+1. **Phase 6 — Streamlit UI + session feedback.** A clickable companion (chat
+   input, recommendation cards, evidence, operating-mode badge, like/dislike,
+   visible "reset memory"); feedback nudges a later ranking within the session.
+2. **Phase 7 — privacy-safe JSONL logging + evaluation harness.** Golden cases
+   across normal/edge/adversarial/outage with a pass/fail summary.
+3. **Optional:** a Gemini structured-intent parser behind `IntentParser.parse`.
+4. **Human sign-off** remains outstanding — the catalog representative/outlier
+   review, the AI-drafted context guides, and the `ai_interactions.md`/voice-card
+   drafts.

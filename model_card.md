@@ -120,10 +120,24 @@ confidence.
 The experiments below were recorded against the original 20-track baseline and
 are preserved because they motivated later changes. They are not current
 200-track acceptance results. The current automated catalog/service/retrieval
-result is `95 passed` (Features 3/3b/4 added retrieval, context-guide, and
-embedding/hybrid tests; Phase 4 added input-guard, intent-parser, and companion
+result is `113 passed` (Features 3/3b/4 + Phases 4–5 added retrieval,
+context-guide, embedding/hybrid, guard/intent/companion, and MMR/evaluator/voice
 tests, all offline); a dedicated AI/RAG evaluation harness with quality metrics
 remains future work.
+
+**Specialized behavior — Cadence's voice.** The companion can present results in
+the voice of *Cadence*, a warm fictional DJ (voice card + few-shot in
+`docs/CADENCE_VOICE.md`). Cadence only *frames* the set; the track identities
+always come from the validated evidence, the framing is grounding-checked
+(anything quoting a non-retrieved song is discarded), and the deterministic
+template voice is the always-available baseline and fallback. Cadence never claims
+to have heard a track, to have feelings, or to be human.
+
+| Baseline (template) | Cadence (grounded Gemini) |
+|---|---|
+| `Here are a few picks (instrumental, clean) for that:` | `Here is a wordless mix of clean, steady instrumental textures designed to keep your mind anchored through a long study session.` |
+
+Both are followed by the identical, validated track list.
 
 **Input-privacy and safety (Phase 4).** Natural-language queries pass through a
 deterministic guard before anything else: it redacts emails, phone numbers, and

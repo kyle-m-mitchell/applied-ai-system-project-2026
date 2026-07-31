@@ -1,13 +1,13 @@
 %% AI Music Concierge — target architecture
 %% Solid arrows = runtime or indexing data flow.
 %% Dotted arrows = dependency, testing, or observability.
-%% Implemented so far: validated catalog source, curated context guides (2nd
-%% source, via query expansion), the local TF-IDF index, Gemini embeddings with
-%% semantic+lexical hybrid ranking (committed cache + fake + TF-IDF fallback), the
-%% Retriever interface, the input/privacy guard, and a deterministic-intent
-%% MusicCompanion with bounded actions (wired through the CLI). The full agent
-%% state machine, grounding evaluator, Cadence voice, session memory, logs, and
-%% report remain planned; Gemini is used only for embeddings.
+%% Implemented so far: validated catalog + curated context guides, the retrieval
+%% index (TF-IDF + Gemini embeddings + hybrid, committed cache + fallbacks), the
+%% input/privacy guard, and the bounded MusicCompanion agent — intent parser, MMR
+%% diversity, grounding evaluator, situation policy, and Cadence's voice
+%% (deterministic + optional grounded Gemini), wired through the CLI. Gemini is
+%% used for embeddings and Cadence's framing. Session memory, privacy-safe logs,
+%% the evaluation report, and the Streamlit UI remain planned.
 
 flowchart TB
     subgraph RUNTIME["Runtime request and response"]
@@ -15,12 +15,12 @@ flowchart TB
         LISTENER(["Listener"])
         APP["Streamlit chat UI or CLI<br/>RecommendationService"]
         INPUT_GUARD["Input + privacy guard (implemented)<br/>size · PII/secret redaction · injection · crisis safe-response"]
-        AGENT["MusicCompanion (implemented, deterministic)<br/>rule intent parser + bounded actions<br/>provider intent + Cadence voice planned"]
-        RETRIEVER["Retriever interface<br/>local TF-IDF search + provenance (implemented)<br/>provider embeddings planned"]
-        RANKER["Hard filters + hybrid ranker<br/>semantic · content · feedback · diversity"]
-        EVALUATOR["Runtime evaluator<br/>IDs · constraints · duplicates · evidence"]
-        POLICY["Cadence situation policy<br/>recommend · clarify · no-match · degraded"]
-        VOICE["Cadence persona renderer<br/>warm fictional DJ · grounded language"]
+        AGENT["MusicCompanion — bounded agent (implemented)<br/>rule intent parser + allowlisted actions + privacy-safe trace<br/>provider structured-intent planned"]
+        RETRIEVER["Retriever interface (implemented)<br/>TF-IDF · context guides · Gemini embeddings · hybrid<br/>+ provenance"]
+        RANKER["Hard filters + MMR diversity (implemented)<br/>semantic · lexical blend; content/feedback weights planned"]
+        EVALUATOR["Grounding evaluator (implemented)<br/>IDs · constraints · duplicates · evidence · invented-song check"]
+        POLICY["Situation policy (implemented)<br/>recommend · clarify · no-match · safe-response · degraded"]
+        VOICE["Cadence voice (implemented)<br/>deterministic baseline + optional grounded Gemini framing"]
         OUTPUT_GUARD["Output guard<br/>schema · claims · catalog validation"]
         RESULT(["Recommendations<br/>songs · reasons · evidence · operating mode"])
 
@@ -51,7 +51,7 @@ flowchart TB
         SOURCES[("Validated 200-song catalog (implemented)<br/>+ curated context guides (implemented, query expansion)")]
         INDEX["Retrieval index<br/>TF-IDF (2 sources) + Gemini embeddings, committed cache (implemented)<br/>semantic+lexical hybrid ranking"]
         MEMORY[("Session-only memory<br/>preferences · feedback · recent context")]
-        GEMINI["Gemini provider adapter<br/>embeddings implemented (optional, lazy) · structured output + grounded language planned<br/>one retry, then local fallback"]
+        GEMINI["Gemini provider adapter (stdlib REST, optional)<br/>embeddings + Cadence framing implemented · structured intent planned<br/>backoff/retry, then local fallback"]
 
         CURATOR --> SOURCES
         SOURCES --> INDEX
