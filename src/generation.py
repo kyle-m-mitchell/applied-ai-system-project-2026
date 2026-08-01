@@ -69,7 +69,7 @@ class GeminiTextGenerator(TextGenerator):
         model_id: str = TEXT_MODEL,
         *,
         timeout: float = 30.0,
-        max_retries: int = 3,
+        max_retries: int = 1,  # one bounded retry, matching the design's promise
         max_output_tokens: int = 200,
     ) -> None:
         self.model_id = model_id

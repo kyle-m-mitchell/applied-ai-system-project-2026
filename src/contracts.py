@@ -345,7 +345,7 @@ class VoiceSource(str, Enum):
     """Which renderer produced the companion's message."""
 
     TEMPLATE = "template"  # deterministic, reproducible, always available
-    GEMINI = "gemini"  # provider-generated, grounded and output-guarded
+    GENERATED = "generated"  # produced by a text generator (fake or provider)
 
 
 class EvaluationReport(ContractModel):
@@ -359,7 +359,9 @@ class AgentTrace(ContractModel):
     """A structured, privacy-safe record of one bounded-agent turn.
 
     It captures categories, ids, and decisions — never raw sensitive text — so a
-    reviewer can see how the companion reached its answer.
+    reviewer can see how the companion reached its answer. ``evaluation`` is the
+    result check; ``text_evaluation`` is the grounding check on generated text (if
+    a generator ran); ``voice_model`` names the generator that produced the voice.
     """
 
     guard_category: GuardCategory
@@ -367,8 +369,10 @@ class AgentTrace(ContractModel):
     retrieved_ids: tuple[int, ...] = ()
     diversity_applied: bool = False
     evaluation: EvaluationReport = EvaluationReport(ok=True)
+    text_evaluation: EvaluationReport | None = None
     action: CompanionAction
     voice_source: VoiceSource = VoiceSource.TEMPLATE
+    voice_model: str | None = None
     fallback_reason: str | None = None
 
 
@@ -385,3 +389,16 @@ class CompanionResponse(ContractModel):
     retrieval: RetrievalResult | None = None
     intent: MusicIntent | None = None
     trace: AgentTrace | None = None
+
+    @model_validator(mode="after")
+    def enforce_action_invariants(self) -> Self:
+        """Keep action and payload consistent (e.g. recommend must have hits)."""
+        if self.action in (CompanionAction.RECOMMEND, CompanionAction.DEGRADED):
+            if self.retrieval is None or not self.retrieval.hits:
+                raise ValueError(f"{self.action.value} response must include hits")
+        if self.action is CompanionAction.NO_MATCH and self.retrieval is None:
+            raise ValueError("no_match response must include the (empty) retrieval result")
+        if self.action in (CompanionAction.CLARIFY, CompanionAction.SAFE_RESPONSE):
+            if self.retrieval is not None:
+                raise ValueError(f"{self.action.value} response must not include retrieval")
+        return self

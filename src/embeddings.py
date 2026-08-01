@@ -61,8 +61,30 @@ def normalize(vector: Sequence[float]) -> Vector:
 
 
 def cosine(a: Sequence[float], b: Sequence[float]) -> float:
-    """Cosine similarity of two dense vectors (exact dot product if normalized)."""
+    """Cosine similarity of two dense vectors (exact dot product if normalized).
+
+    Requires equal lengths — mismatched dimensions are a bug, not something to
+    silently truncate.
+    """
+    if len(a) != len(b):
+        raise ValueError(f"vector length mismatch: {len(a)} != {len(b)}")
     return sum(x * y for x, y in zip(a, b))
+
+
+def _validate_vector(vector: Vector, dimension: int, label: str) -> None:
+    """Reject a cached vector with the wrong size, non-finite values, or bad norm."""
+    if len(vector) != dimension:
+        raise ValueError(f"{label}: expected dimension {dimension}, got {len(vector)}")
+    if not all(math.isfinite(value) for value in vector):
+        raise ValueError(f"{label}: vector contains non-finite values")
+    norm = math.sqrt(sum(value * value for value in vector))
+    if not math.isclose(norm, 1.0, abs_tol=1e-3):
+        raise ValueError(f"{label}: vector is not unit-norm (norm={norm:.5f})")
+
+
+def _normalize_query_key(text: str) -> str:
+    """Case- and whitespace-insensitive key so cache hits are not brittle."""
+    return " ".join(text.lower().split())
 
 
 def _make_ssl_context() -> ssl.SSLContext:
@@ -152,7 +174,7 @@ class GeminiEmbedder(Embedder):
         *,
         timeout: float = 30.0,
         request_delay: float = 0.0,
-        max_retries: int = 5,
+        max_retries: int = 1,  # runtime default: one retry. Batch builds override.
     ) -> None:
         self.model_id = model_id
         self.dimension = dimension
@@ -230,15 +252,28 @@ def save_embedding_cache(path: str | Path, cache: EmbeddingCache) -> None:
 
 
 def load_embedding_cache(path: str | Path) -> EmbeddingCache:
-    """Load an embedding cache from JSON, restoring integer ids and tuples."""
+    """Load and structurally validate an embedding cache from JSON.
+
+    Validates the declared dimension, that the cache is non-empty, and that every
+    vector has the right length, finite values, and unit norm — so a corrupt cache
+    fails loudly instead of poisoning retrieval.
+    """
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    vectors = {
-        int(track_id): tuple(float(value) for value in vector)
-        for track_id, vector in payload["vectors"].items()
-    }
+    dimension = int(payload["dimension"])
+    if dimension <= 0:
+        raise ValueError(f"embedding cache has non-positive dimension: {dimension}")
+
+    vectors: dict[int, Vector] = {}
+    for track_id, raw in payload["vectors"].items():
+        vector = tuple(float(value) for value in raw)
+        _validate_vector(vector, dimension, f"track {track_id}")
+        vectors[int(track_id)] = vector
+    if not vectors:
+        raise ValueError("embedding cache contains no vectors")
+
     return EmbeddingCache(
         embedding_model=payload["embedding_model"],
-        dimension=int(payload["dimension"]),
+        dimension=dimension,
         content_hash=payload["content_hash"],
         vectors=vectors,
     )
@@ -264,15 +299,21 @@ def save_query_cache(path: str | Path, cache: QueryCache) -> None:
 
 
 def load_query_cache(path: str | Path) -> QueryCache:
-    """Load a query cache from JSON."""
+    """Load and structurally validate a query cache from JSON."""
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    vectors = {
-        text: tuple(float(value) for value in vector)
-        for text, vector in payload["vectors"].items()
-    }
+    dimension = int(payload["dimension"])
+    if dimension <= 0:
+        raise ValueError(f"query cache has non-positive dimension: {dimension}")
+
+    vectors: dict[str, Vector] = {}
+    for text, raw in payload["vectors"].items():
+        vector = tuple(float(value) for value in raw)
+        _validate_vector(vector, dimension, f"query {text!r}")
+        vectors[text] = vector
+
     return QueryCache(
         embedding_model=payload["embedding_model"],
-        dimension=int(payload["dimension"]),
+        dimension=dimension,
         vectors=vectors,
     )
 
@@ -288,15 +329,17 @@ class CachedQueryEmbedder(Embedder):
     def __init__(self, cache: QueryCache, fallback: Embedder | None = None) -> None:
         self.model_id = cache.embedding_model
         self.dimension = cache.dimension
-        self._vectors = dict(cache.vectors)
+        # Normalize keys so lookups are case- and whitespace-insensitive.
+        self._vectors = {_normalize_query_key(text): vec for text, vec in cache.vectors.items()}
         self._fallback = fallback
 
     def embed_documents(self, texts: Sequence[str]) -> tuple[Vector, ...]:
         raise NotImplementedError("CachedQueryEmbedder is for queries only")
 
     def embed_query(self, text: str) -> Vector:
-        if text in self._vectors:
-            return self._vectors[text]
+        key = _normalize_query_key(text)
+        if key in self._vectors:
+            return self._vectors[key]
         if self._fallback is not None:
             return self._fallback.embed_query(text)
         raise RuntimeError("query is not cached and no live embedder is available")

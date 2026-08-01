@@ -10,10 +10,22 @@ reproducible baseline and fallback; an optional generator writes only the warm
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
-from src.contracts import MusicIntent, RetrievalHit, VoiceSource
+from src.contracts import EvaluationReport, MusicIntent, RetrievalHit, VoiceSource
 from src.evaluator import GroundingEvaluator
 from src.generation import FewShot, TextGenerator
+
+
+@dataclass(frozen=True)
+class VoiceResult:
+    """The outcome of rendering — message plus how it was produced."""
+
+    message: str
+    source: VoiceSource
+    model: str | None = None
+    fallback_reason: str | None = None
+    text_evaluation: EvaluationReport | None = None
 
 
 # The voice card: the system instruction that shapes Cadence's framing sentence.
@@ -55,24 +67,39 @@ class CadenceVoice:
         intent: MusicIntent,
         *,
         generator: TextGenerator | None = None,
-    ) -> tuple[str, VoiceSource, str | None]:
-        """Return ``(message, voice_source, fallback_reason)`` for a track set."""
+    ) -> VoiceResult:
+        """Render a track set in Cadence's voice, falling back safely."""
         track_block = self._render_tracks(hits)
 
         if generator is None:
-            return self._template(intent, track_block), VoiceSource.TEMPLATE, None
+            return VoiceResult(self._template(intent, track_block), VoiceSource.TEMPLATE)
 
         try:
             framing = generator.generate(
                 CADENCE_SYSTEM, CADENCE_FEW_SHOT, self._evidence_packet(hits, intent)
             ).strip()
         except Exception:  # noqa: BLE001 - provider failed; fall back honestly
-            return self._template(intent, track_block), VoiceSource.TEMPLATE, "generation failed"
+            return VoiceResult(
+                self._template(intent, track_block),
+                VoiceSource.TEMPLATE,
+                fallback_reason="generation failed",
+            )
 
-        report = self._evaluator.check_grounded_text(framing, [hit.track.title for hit in hits])
+        allowed = [hit.track.title for hit in hits] + [hit.track.artist for hit in hits]
+        report = self._evaluator.check_grounded_text(framing, allowed)
         if framing and report.ok:
-            return f"{framing}\n{track_block}", VoiceSource.GEMINI, None
-        return self._template(intent, track_block), VoiceSource.TEMPLATE, "generated text failed grounding"
+            return VoiceResult(
+                f"{framing}\n{track_block}",
+                VoiceSource.GENERATED,
+                model=generator.model_id,
+                text_evaluation=report,
+            )
+        return VoiceResult(
+            self._template(intent, track_block),
+            VoiceSource.TEMPLATE,
+            fallback_reason="generated text failed grounding",
+            text_evaluation=report,
+        )
 
     def _template(self, intent: MusicIntent, track_block: str) -> str:
         bits = []

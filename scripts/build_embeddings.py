@@ -30,6 +30,8 @@ from src.embeddings import (  # noqa: E402
     EmbeddingCache,
     GeminiEmbedder,
     QueryCache,
+    load_embedding_cache,
+    load_query_cache,
     save_embedding_cache,
     save_query_cache,
 )
@@ -72,7 +74,9 @@ def main() -> None:
 
     tracks = RecommendationService(load_songs(str(CATALOG_PATH))).catalog
     try:
-        embedder = GeminiEmbedder(request_delay=0.7)  # gentle throttle under the RPM cap
+        # Batch build: more retries are worth it (and the run is resumable anyway);
+        # the runtime query path keeps the one-retry default.
+        embedder = GeminiEmbedder(request_delay=0.7, max_retries=5)
     except RuntimeError as exc:
         _fail(str(exc))
         return
@@ -90,7 +94,7 @@ def main() -> None:
                 content_hash,
             ):
                 vectors = dict(previous.vectors)
-        except Exception:  # noqa: BLE001 - a bad cache is simply rebuilt
+        except (OSError, ValueError, KeyError):  # a genuinely bad cache is rebuilt
             vectors = {}
 
     def _save_catalog() -> None:
@@ -123,7 +127,7 @@ def main() -> None:
             previous_q = load_query_cache(QUERY_CACHE)
             if (previous_q.embedding_model, previous_q.dimension) == (model, dimension):
                 query_vectors = dict(previous_q.vectors)
-        except Exception:  # noqa: BLE001
+        except (OSError, ValueError, KeyError):
             query_vectors = {}
     try:
         for query in EXAMPLE_QUERIES:

@@ -120,10 +120,10 @@ confidence.
 The experiments below were recorded against the original 20-track baseline and
 are preserved because they motivated later changes. They are not current
 200-track acceptance results. The current automated catalog/service/retrieval
-result is `113 passed` (Features 3/3b/4 + Phases 4–5 added retrieval,
+result is `115 passed` (Features 3/3b/4 + Features 5–6 added retrieval,
 context-guide, embedding/hybrid, guard/intent/companion, and MMR/evaluator/voice
 tests, all offline); a dedicated AI/RAG evaluation harness with quality metrics
-remains future work.
+is the next feature.
 
 **Specialized behavior — Cadence's voice.** The companion can present results in
 the voice of *Cadence*, a warm fictional DJ (voice card + few-shot in
@@ -139,7 +139,7 @@ to have heard a track, to have feelings, or to be human.
 
 Both are followed by the identical, validated track list.
 
-**Input-privacy and safety (Phase 4).** Natural-language queries pass through a
+**Input-privacy and safety (Feature 5).** Natural-language queries pass through a
 deterministic guard before anything else: it redacts emails, phone numbers, and
 key-like secrets (which are never sent to the provider or logged), strips
 prompt-injection directives, and routes clear crisis language to a brief,

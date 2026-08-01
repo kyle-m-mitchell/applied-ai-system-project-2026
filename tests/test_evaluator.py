@@ -96,3 +96,18 @@ def test_grounded_text_rejects_invented_song():
 
 def test_grounded_text_rejects_empty():
     assert not GroundingEvaluator().check_grounded_text("   ", ["Focus Flow"]).ok
+
+
+def test_over_limit_flagged():
+    intent = MusicIntent(query="chill", limit=1)
+    report = GroundingEvaluator().evaluate_result(intent, [_hit(1), _hit(2)], VALID_IDS)
+    assert not report.ok
+    assert any("more hits than requested" in f for f in report.failures)
+
+
+def test_multiple_failures_accumulate():
+    intent = MusicIntent(query="chill", limit=5, instrumental_only=True)
+    hits = [_hit(1, instrumental=False), _hit(1, instrumental=False)]  # dup + constraint
+    report = GroundingEvaluator().evaluate_result(intent, hits, VALID_IDS)
+    assert not report.ok
+    assert len(report.failures) >= 2

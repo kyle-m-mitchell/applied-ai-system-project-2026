@@ -3,7 +3,7 @@
 This is the durable source of truth for the project. It is written for two
 audiences: a beginner learning the system from first principles and a future AI
 assistant that may have none of the conversation history. Update it whenever an
-implementation phase, major decision, dependency, test result, or limitation
+implemented feature, major decision, dependency, test result, or limitation
 changes.
 
 > **Status language matters:** “Implemented” describes code that exists and has
@@ -35,14 +35,14 @@ Last updated: **2026-07-30**
 
 | Item | Current state |
 |---|---|
-| Branch | `main`; Features 3–4 and Phases 4–5 are uncommitted — inspect with `git status --short` |
-| Phase | **Phase 5 (bounded agent + grounding evaluator + MMR diversity + Cadence's voice) implemented and tested; live voice validated against the real API; human sign-off pending** |
-| Working tree | New this phase: `src/{ranking,evaluator,generation,voice}.py`, `tests/test_{ranking,evaluator,voice}.py`, `docs/CADENCE_VOICE.md`; edited: `src/{contracts,companion,main}.py`, `tests/test_companion.py`, `ai_interactions.md`, docs. (Plus all Features 3–4 / Phase 4 files.) |
-| Last verified regression check | `113 passed` from `.venv/bin/python -m pytest -q` on 2026-07-30 (fully offline; no key) |
-| Implemented | Original scorer, contracts, service, 200-track catalog, catalog data card, TF-IDF + context-guide retrieval, Gemini embeddings + hybrid ranking (committed cache + fake + fallback), input/privacy guard + deterministic intent parser, **a bounded `MusicCompanion` agent with a privacy-safe trace, MMR diversity, a grounding evaluator, and Cadence's voice (deterministic baseline + optional grounded Gemini renderer, output-guarded) — wired through the CLI**, full offline test suite, before/after demos, Mermaid architecture |
+| Branch | `main`; the retrieval, guard/intent, and agent/Cadence work is committed. The current working tree holds the Step-1 stabilization fixes (cache resume, cache/cosine validation, query-key normalization, no raw-PII echo, tighter response/trace contracts, bounded retries, MMR relevance floor, docs). Inspect with `git status --short`. |
+| Feature | **Feature 6 (bounded agent + grounding evaluator + MMR diversity + Cadence's voice) implemented and tested; live voice validated against the real API. A Step-1 stabilization pass (from a code review) then hardened caches, contracts, retries, MMR, and docs. Human sign-off pending** |
+| Working tree | Uncommitted Step-1 stabilization fixes across `src/{embeddings,retrieval,contracts,voice,companion,generation,ranking,evaluator,main}.py`, `scripts/build_embeddings.py`, tests, and docs (see the Branch row) |
+| Last verified regression check | `115 passed` from `.venv/bin/python -m pytest -q` on 2026-07-31 (fully offline; no key) |
+| Implemented | Original scorer, contracts, service, 200-track catalog, catalog data card, TF-IDF + context-guide retrieval, Gemini embeddings + hybrid ranking (committed cache + fake + fallback), input/privacy guard + deterministic intent parser, **a bounded `MusicCompanion` agent with a privacy-safe trace, MMR diversity (relevance-floored), a grounding evaluator, and Cadence's voice (deterministic baseline + optional grounded generated renderer, output-guarded) — wired through the CLI**, full offline test suite, before/after demos, Mermaid architecture |
 | In progress | Human review of catalog records, AI-drafted context-guide wording, and the `ai_interactions.md`/voice-card drafts |
-| Not implemented yet | Gemini structured intent; Streamlit UI + session feedback/memory (Phase 6); privacy-safe JSONL logging + evaluation harness (Phase 7) |
-| Next action | Phase 6 (Streamlit UI + session feedback) or Phase 7 (JSONL logging + evaluation harness); optional Gemini structured-intent parser; complete human sign-off |
+| Not implemented yet | Gemini structured intent; evaluation harness (Feature 7); session feedback + web UI (Feature 8); privacy-safe JSONL logging + presentation (Feature 9) |
+| Next action | Feature 7 (evaluation harness — build before the UI), then Feature 8 (session feedback + stdlib web UI); optional Gemini structured-intent parser; complete human sign-off |
 
 ### Current implementation boundary
 
@@ -84,7 +84,7 @@ remaining small enough to explain and operate reliably.
 | Reliability or guardrail | 3 | Contracts, input/privacy guard, grounded output evaluator, fallback | Implemented (contracts, guard, grounding evaluator, and local fallbacks for retrieval and voice) |
 | README and setup | 3 | Goals, installation, run/test commands, sample output | Partially implemented |
 | AI collaboration reflection | 3 | Model card records prompting, debugging, one useful and one flawed suggestion, limits | Planned refresh |
-| Multi-source RAG bonus | +2 | Song records + context guides + session feedback, with before/after evidence | Implemented (two sources: catalog + curated context guides, with guide-driven query expansion and a before/after demo; session feedback is the 3rd source, added in Phase 6) |
+| Multi-source RAG bonus | +2 | Song records + context guides + session feedback, with before/after evidence | Implemented (two sources: catalog + curated context guides, with guide-driven query expansion and a before/after demo; session feedback is the 3rd source, added in Feature 8) |
 | Agentic workflow bonus | +2 | Bounded steps/tool calls and structured trace in `ai_interactions.md` | Implemented (bounded `MusicCompanion` with an `AgentTrace`; `ai_interactions.md` drafted) |
 | Specialized behavior bonus | +2 | Cadence voice card/few-shot examples and baseline comparison | Implemented (`docs/CADENCE_VOICE.md` voice card + few-shot; grounded Gemini voice with a deterministic baseline comparison) |
 | Evaluation harness bonus | +2 | Predefined cases and a pass/fail metric summary | Planned |
@@ -255,10 +255,10 @@ product useful, testable, free to demo, and honest during provider failures.
 | Use context guides as query expansion + evidence, not as recommendable items | A guide is not a track; expanding the query with a guide's catalog-vocabulary terms improves track retrieval while keeping "tracks are the only recommendable items" intact | Implemented |
 | Gate guide expansion with a dominance threshold (≥ 0.5 × top guide score) | Drops weak, spurious guide matches that would otherwise inject off-topic expansion terms | Implemented |
 | Use real Gemini embeddings but keep the system reproducible via a committed cache + deterministic fake + TF-IDF fallback | Gemini is the tool that *builds* a reproducible artifact; the committed vectors and offline fallback are what make it portable and testable with no key | Implemented |
-| Feature 4 hybrid blends semantic + lexical (not yet the 55/35/10) | The numeric-scorer and feedback weights need the Phase 4 intent parser and Phase 6 memory; dense+sparse is the buildable blend now, with configurable weights | Implemented |
+| Feature 4 hybrid blends semantic + lexical (not yet the 55/35/10) | The numeric-scorer and feedback weights need the Feature 5 intent parser and Feature 8 memory; dense+sparse is the buildable blend now, with configurable weights | Implemented |
 | Call the Gemini REST embeddings endpoint with the standard library (`urllib`), not the `google-genai` SDK | Zero third-party dependencies; the SDK's `cryptography` dep has no Python-3.14 wheel and needs Rust/OpenSSL to build. REST is a plain HTTPS POST, fits the project's zero-dependency ethos, and runs on 3.14 | Implemented |
 | Read the API key only from `GEMINI_API_KEY` (git-ignored `.env`); never log or commit it | A live provider must not turn observability or version control into a secret leak | Implemented |
-| Keep the `Retriever` standalone — no natural-language `query` in the public request yet | The app must not accept inputs it cannot responsibly process; NL entry waits for the Phase 4 privacy guard + intent parser | Active |
+| Keep the `Retriever` standalone — no natural-language `query` in the public request yet | The app must not accept inputs it cannot responsibly process; NL entry waits for the Feature 5 privacy guard + intent parser | Active |
 | Start hybrid ranking at 55/35/10 | Semantic relevance leads, original content score anchors behavior, session feedback personalizes modestly | Hypothesis to evaluate, not a final fact |
 | Use MMR-style diversity | Prevent five near-duplicate results while retaining relevance | Planned |
 | Never log raw sensitive prompts | Observability must not become a privacy leak | Planned |
@@ -275,7 +275,7 @@ demonstrable without a paid API or network access.
 | Runtime contracts | Pydantic 2 | Strict schemas and useful validation errors | Implemented |
 | Unit/integration tests | pytest | Small, readable tests and fixtures | Implemented |
 | Web UI | Streamlit | Fast Python-only interactive demo with session state | Declared; UI planned |
-| Gemini access | Direct REST call with the Python standard library (`urllib`) | Zero third-party dependency; the `google-genai` SDK's `cryptography` dep has no Python-3.14 wheel. Embeddings are a simple HTTPS POST | Implemented for embeddings (stdlib REST); structured output/function calling will be revisited when the agent phase needs them |
+| Gemini access | Direct REST call with the Python standard library (`urllib`) | Zero third-party dependency; the `google-genai` SDK's `cryptography` dep has no Python-3.14 wheel. Embeddings are a simple HTTPS POST | Implemented for embeddings (stdlib REST); structured output/function calling will be revisited when a later feature needs them |
 | Structured intent/voice | `gemini-3.5-flash-lite` | Current stable low-cost/free-tier candidate for structured tasks | Planned |
 | Hosted embeddings | `gemini-embedding-2` reduced to 768 dimensions | Current stable semantic model; 768 is an officially recommended dimension | Implemented (committed vector cache + deterministic fake for tests + TF-IDF fallback) |
 | Offline retrieval | **Pure-Python standard-library TF-IDF + cosine** (scikit-learn not used) | Deterministic, inspectable, no API/vector database, no new dependency, no Python-3.14 wheel risk; scikit-learn was overkill for 200 short docs | Implemented |
@@ -330,7 +330,7 @@ Research verified on **2026-07-26**:
   the standard library. The SDK pulls in `cryptography`, which has no Python-3.14
   wheel and fails to build without Rust/OpenSSL on this machine; the REST API
   needs no third-party package. Revisit the SDK (in a Python-3.12 env) only if a
-  later phase needs its structured-output/function-calling helpers.
+  later feature needs its structured-output/function-calling helpers.
 
 Current package snapshot from official package indexes on the research date:
 
@@ -393,7 +393,7 @@ behavior.
 
 The canonical Mermaid source includes the retriever, agent, evaluator, tester,
 human curator, data flow, fallback, privacy-safe logs, and provider boundary. It
-must be revised from “target” to “implemented” as phases land.
+must be revised from “target” to “implemented” as features land.
 
 ## Feature 2 specification: retrieval-ready catalog
 
@@ -448,7 +448,11 @@ until a person has actually signed off.
 
 ## Implementation roadmap
 
-### Phase 1 — validated service foundation
+Features are listed by capability, in build order. Features 1–6 are implemented;
+the remaining order is **7 evaluation harness → 8 session feedback + UI → 9
+logging, evidence, and presentation** (measure quality before adding UI polish).
+
+### Feature 1 — validated service foundation
 
 Status: **Implemented**
 
@@ -458,7 +462,7 @@ must use.
 Done when: invalid input cannot enter ranking unnoticed, results are typed and
 immutable, CLI uses the service, and legacy ranking remains unchanged.
 
-### Phase 2 — 200-track retrieval-ready catalog
+### Feature 2 — 200-track retrieval-ready catalog
 
 Status: **Implemented; human content sign-off pending**
 
@@ -470,9 +474,9 @@ Primary files: `data/songs.csv`, `data/legacy_songs.csv`, catalog generator,
 Technical gate: complete. Final content gate: a person completes the review
 table and flagged-outlier check in `docs/CATALOG_DATA_CARD.md`.
 
-### Phase 3 — custom multi-source retrieval index
+### Features 3–4 — multi-source retrieval index and embeddings
 
-Status: **Feature 3 + 3b (local, multi-source: catalog + context guides) implemented; provider embeddings pending**
+Status: **Implemented** (Feature 3 TF-IDF, Feature 3b context guides, Feature 4 Gemini embeddings + hybrid)
 
 Build one canonical retrieval document per track from its rich fields. Add
 curated context guides as a second source with provenance. Implement local
@@ -518,10 +522,10 @@ before/after improvement over the original scorer for context-rich requests.
 - [x] `recommend()` path and the public request contract unchanged (still no NL `query` field).
 - [x] Real embedding cache generated and committed (`data/embeddings/`, 200 track vectors + 5 example queries, `gemini-embedding-2` @ 768-d). Real paraphrase before/after recorded: `"tunes for cramming before an exam"` returns lofi study tracks at `sem 0.70+` with `lex 0.000` (zero shared words) — a match TF-IDF and guides both miss.
 
-**Still pending in Phase 3:** session feedback as a third source (Phase 6); and a
-quantitative before/after retrieval metric in the evaluation harness.
+**Still pending here:** session feedback as a third source (Feature 8); and a
+quantitative before/after retrieval metric in the evaluation harness (Feature 7).
 
-### Phase 4 — input/privacy guard and structured intent
+### Feature 5 — input/privacy guard and structured intent
 
 Status: **Implemented (deterministic); Gemini structured intent deferred**
 
@@ -534,7 +538,7 @@ Done when: valid language changes retrieval; unsafe/sensitive input follows a
 safe path; unsupported constraints are not invented; raw private text is not
 logged.
 
-**Phase 4 acceptance gate:**
+**Feature 5 acceptance gate:**
 
 - [x] `InputGuard` (`src/guard.py`): size limit; PII/secret **redaction** (email, phone, card/SSN-like, key-like/high-entropy); prompt-injection stripping; conservative crisis → safe response. Deterministic, offline, auditable regexes.
 - [x] Deterministic `IntentParser` (`src/intent.py`) reusing the scorer's genre/mood vocabulary: hard-filter cues (`no vocals` → instrumental-only, `clean` → exclude-explicit), genre/mood detection (incl. multi-word), one clarifying question when nothing is recognized.
@@ -544,7 +548,7 @@ logged.
 - [x] `tests/test_{guard,intent,companion}.py` pass; full suite `95 passed` on 2026-07-30, fully offline.
 - [ ] Gemini structured-intent parser behind the same `IntentParser.parse` shape (deferred).
 
-### Phase 5 — bounded agent, evaluator, and Cadence
+### Feature 6 — bounded agent, evaluator, and Cadence
 
 Status: **Implemented** (deterministic + optional grounded Gemini voice)
 
@@ -557,7 +561,7 @@ Done when: recommend, clarify, no-match, safe-response, and degraded paths are
 all reachable and tested; output claims are grounded; provider failure still
 returns a useful labeled result.
 
-**Phase 5 acceptance gate:**
+**Feature 6 acceptance gate:**
 
 - [x] Bounded agent: `MusicCompanion.respond()` chooses from an allowlist (`recommend / clarify / no_match / safe_response / degraded`) and emits a privacy-safe `AgentTrace` (categories, ids, decisions — never raw sensitive text).
 - [x] MMR diversity (`src/ranking.py`): deterministic re-rank so the top-k isn't near-duplicates; relevance still leads.
@@ -570,44 +574,23 @@ returns a useful labeled result.
 
 The 55/35/10 hybrid with the numeric scorer + session feedback remains partial:
 Feature 4's semantic+lexical blend is in place; the scorer/feedback weights await
-structured prefs (this needs the intent parser to emit them) and Phase 6 memory.
+structured prefs (this needs the intent parser to emit them) and Feature 8 memory.
 
-### Phase 6 — Streamlit UI and session feedback
+### Feature 7 — evaluation harness (next)
 
-Status: **Planned**
+Status: **Planned** — built before the UI so quality is measurable, not hidden
+behind polish.
 
-Create the working companion interface with chat/request input, filters,
-recommendation cards, reason/evidence display, operating-mode badge, like/
-dislike controls, and a visible “reset session memory” action.
-
-Done when: UI and CLI call the same service; feedback changes a later ranking
-only within the session; a refresh/reset removes memory; three demo inputs are
-reproducible.
-
-### Phase 7 — privacy-safe logging and evaluation harness
-
-Status: **Planned**
-
-Log structured events and create normal, edge, adversarial, missing-context,
-and provider-outage cases. Produce a machine-readable report plus a readable
-pass/fail summary.
-
-Suggested event fields:
-
-```text
-request_id, timestamp, operating_mode, sanitized_intent,
-retrieved_track_ids, retrieval_scores, validation_result,
-selected_action, fallback_reason, latency_ms
-```
-
-Never log API keys, raw prompts containing PII, full session memory, or private
-reasoning. Define and document retention/deletion policy before deployment.
+Create normal, edge, adversarial, missing-context, and provider-outage cases and
+run them through the same public path. Produce a machine-readable report plus a
+readable pass/fail summary; provider calls can be faked so the harness runs
+offline and deterministically.
 
 Suggested metrics:
 
 - intent parse success;
 - hard-constraint adherence;
-- catalog faithfulness;
+- catalog faithfulness (grounding);
 - retrieval recall@k;
 - duplicate result rate;
 - fallback success rate;
@@ -617,14 +600,37 @@ Suggested metrics:
 Done when: one command runs the evaluation set and prints pass/fail totals,
 provider calls can be faked, and failures are actionable rather than hidden.
 
-### Phase 8 — evidence and presentation
+### Feature 8 — session feedback and web UI
+
+Status: **Planned** (stdlib `http.server` UI — Streamlit's `pyarrow` chain will
+not build on Python 3.14).
+
+Create the working companion interface with chat input, recommendation cards,
+reason/evidence display, operating-mode/voice badges, like/dislike controls, and
+a visible “reset session memory” action. Session feedback is the third RAG
+source: 👍 nudges later results toward a liked genre/mood, 👎 suppresses a track,
+all session-only.
+
+Done when: UI and CLI call the same `MusicCompanion`; feedback changes a later
+ranking only within the session; a refresh/reset removes memory; three demo
+inputs are reproducible.
+
+### Feature 9 — privacy-safe logging, evidence, and presentation
 
 Status: **Planned**
 
-Update README setup and 2–3 end-to-end runs, add a guardrail/fallback example,
-finish the model card and AI-collaboration reflection, record a structured agent
-trace in `ai_interactions.md`, synchronize Mermaid with the actual code, and
-prepare the 5–7 minute presentation and portfolio entry.
+Log structured events (never API keys, raw PII prompts, full session memory, or
+private reasoning; define a retention/deletion policy). Suggested event fields:
+
+```text
+request_id, timestamp, operating_mode, sanitized_intent,
+retrieved_track_ids, retrieval_scores, validation_result,
+selected_action, fallback_reason, latency_ms
+```
+
+Then finish the evidence: README setup + 2–3 end-to-end runs, a guardrail/fallback
+example, the model card and AI-collaboration reflection, a synchronized Mermaid +
+regenerated PNG, and the 5–7 minute presentation and portfolio entry.
 
 Done when: a new reviewer can install, run, test, understand, and verify every
 rubric claim from committed artifacts.
@@ -638,7 +644,7 @@ rubric claim from committed artifacts.
    relationships and responsible recommendation rules. *Implemented* as
    `data/context_guides/*.md`, used for guide-driven query expansion + evidence.
 3. **Session feedback:** ephemeral likes, dislikes, and recent preferences.
-   *Planned* (Phase 6).
+   *Planned* (Feature 8).
 
 Every retrieved item carries source type, source ID, content hash, and fields
 used. Session feedback is context, not a permanent document.
@@ -728,7 +734,8 @@ Current limitations:
 - The target diagram contains components not yet implemented.
 - `model_card.md` and older README experiments include historical 20-track
   observations that must be clearly labeled or refreshed.
-- `ai_interactions.md` remains a starter template until the agent phase.
+- `ai_interactions.md` is drafted (SF8 agentic workflow + SF10 design pattern),
+  pending the owner's personalization.
 - TF-IDF retrieval is lexical (word forms); embeddings add meaning, but semantic
   quality needs the committed cache and retrieval similarity is not a calibrated
   probability.
@@ -778,20 +785,20 @@ Open decisions:
 | 2026-07-26 | Recommend Python 3.12 for deployment while local development is 3.14.5 | Matches current Streamlit Community Cloud default and all planned package minimums |
 | 2026-07-27 | Implement retrieval with pure-Python stdlib TF-IDF instead of scikit-learn | Zero new dependencies, inspectable math, no Python-3.14 wheel risk, trivial at 200 short docs |
 | 2026-07-27 | Build a catalog-only retriever first; defer context guides to Feature 3b | One controlled, testable step; interface (`SourceType`, `Retriever`) already leaves room for the second source and the +2 multi-source bonus |
-| 2026-07-27 | Keep the retriever standalone; add no natural-language `query` to the public request | Honest interface — NL entry belongs with the Phase 4 privacy guard + intent parser |
+| 2026-07-27 | Keep the retriever standalone; add no natural-language `query` to the public request | Honest interface — NL entry belongs with the Feature 5 privacy guard + intent parser |
 | 2026-07-27 | Return no hits for no-signal queries rather than zero-score filler | Retrieval must not claim relevance it cannot justify from matched terms |
 | 2026-07-27 | Feature 3b: context guides act via query expansion + evidence, not as recommendable items | A guide is not a track; expanding the query with a guide's catalog terms improves retrieval while keeping tracks the only recommendable items, and yields a clean before/after |
 | 2026-07-27 | Store context guides as one Markdown file per situation | Human-authored, diffable, curator-reviewable; the file stem is the guide id and the first heading is the title |
 | 2026-07-29 | Feature 4: real Gemini embeddings, made reproducible by a committed vector cache + deterministic fake + TF-IDF fallback | Lets the project use a live AI without depending on it — tests and demos run with no key, results stay portable |
-| 2026-07-29 | Hybrid ranking blends semantic + lexical only for now (configurable weights) | The numeric-scorer/feedback weights await Phase 4/6; dense+sparse is the honest blend the current inputs support |
+| 2026-07-29 | Hybrid ranking blends semantic + lexical only for now (configurable weights) | The numeric-scorer/feedback weights await Feature 5/8; dense+sparse is the honest blend the current inputs support |
 | 2026-07-29 | Embeddings call the Gemini REST API via stdlib `urllib` (no `google-genai` SDK); key from a git-ignored `.env` only | The SDK's `cryptography` dep has no Python-3.14 wheel and fails to build without Rust/OpenSSL; REST needs no third-party package. Keeps secrets out of code, logs, and version control |
 | 2026-07-30 | Add `certifi` (pure-Python CA bundle) with a system-trust fallback | The python.org 3.14 build has no usable system trust store, so `urllib` TLS verification fails; `certifi` fixes it with no compilation |
 | 2026-07-30 | Embed one document per `embedContent` call (not sync batch); throttle + backoff + resumable incremental cache | `gemini-embedding-2` exposes single `embedContent` and `asyncBatchEmbedContent`, not sync `batchEmbedContents`; free-tier RPM returns 429, so the build throttles, backs off, and saves progress to resume |
-| 2026-07-30 | Phase 4: natural language enters through a `MusicCompanion`, not a `query` field on `RecommendationRequest` | Keeps the trusted structured-scorer request pure and sets up Phase 5's bounded agent + Cadence voice; two validated entry points, one catalog |
+| 2026-07-30 | Feature 5: natural language enters through a `MusicCompanion`, not a `query` field on `RecommendationRequest` | Keeps the trusted structured-scorer request pure and sets up Feature 6's bounded agent + Cadence voice; two validated entry points, one catalog |
 | 2026-07-30 | Deterministic rule-based intent parser first (Gemini structured intent deferred behind the same interface) | Reproducible and key-free; the rule parser is the required fallback regardless — same local-first pattern as retrieval |
 | 2026-07-30 | Guard redacts PII/secrets and routes sensitive queries to the local retriever | Sensitive text must never reach the provider or logs; redaction happens before retrieval, and a sensitive query is answered at operating mode `local` |
-| 2026-07-30 | Phase 5 Cadence voice: deterministic renderer + optional grounded Gemini framing; the model never supplies song facts | Earns the specialized-behavior bonus while staying reproducible and hallucination-safe — the app lists the tracks; Cadence only frames them, and the framing is grounding-checked |
-| 2026-07-30 | Sensitive queries reach neither the retrieval nor the language provider | Extends the Phase 4 guarantee: a redacted/local query uses the local retriever and the deterministic voice, never Gemini |
+| 2026-07-30 | Feature 6 Cadence voice: deterministic renderer + optional grounded Gemini framing; the model never supplies song facts | Earns the specialized-behavior bonus while staying reproducible and hallucination-safe — the app lists the tracks; Cadence only frames them, and the framing is grounding-checked |
+| 2026-07-30 | Sensitive queries reach neither the retrieval nor the language provider | Extends the Feature 5 guarantee: a redacted/local query uses the local retriever and the deterministic voice, never Gemini |
 | 2026-07-30 | MMR diversity via a genre-family similarity proxy (no vectors) | Deterministic, cheap, reuses the scorer's families; keeps the top-k from being five near-duplicates without a heavy re-embedding step |
 
 ## Commands for the next developer
@@ -819,7 +826,7 @@ the substantive diff first. Preserve unrelated user changes.
 
 ## Teaching track and knowledge checks
 
-Use this learning loop for every phase:
+Use this learning loop for every feature:
 
 1. Explain the concept in plain English.
 2. Point to where it lives in code.
@@ -853,18 +860,23 @@ honest.
 
 ## Next action
 
-The full local + provider stack is built and tested offline (`113 passed`):
+The full local + provider stack is built and tested offline (`115 passed`):
 retrieval (TF-IDF + context guides), embeddings + hybrid ranking, the
-natural-language guard + intent parser, and now the bounded `MusicCompanion`
-agent — MMR diversity, grounding evaluator, and Cadence's voice (deterministic +
-grounded Gemini), wired through the CLI (Phase 5). Next:
+natural-language guard + intent parser, and the bounded `MusicCompanion` agent —
+MMR diversity, grounding evaluator, and Cadence's voice (deterministic + grounded
+Gemini), wired through the CLI (Feature 6), then hardened by a Step-1 stabilization
+pass. Next, in order:
 
-1. **Phase 6 — Streamlit UI + session feedback.** A clickable companion (chat
-   input, recommendation cards, evidence, operating-mode badge, like/dislike,
-   visible "reset memory"); feedback nudges a later ranking within the session.
-2. **Phase 7 — privacy-safe JSONL logging + evaluation harness.** Golden cases
-   across normal/edge/adversarial/outage with a pass/fail summary.
-3. **Optional:** a Gemini structured-intent parser behind `IntentParser.parse`.
-4. **Human sign-off** remains outstanding — the catalog representative/outlier
+1. **Feature 7 — evaluation harness.** Golden cases across
+   normal/edge/adversarial/missing-context/outage through the same public path,
+   with a pass/fail summary; provider calls faked so it runs offline. Built
+   **before** the UI so quality is measured, not hidden behind polish.
+2. **Feature 8 — session feedback + stdlib web UI.** A clickable companion (chat
+   input, recommendation cards, evidence, operating-mode/voice badges,
+   like/dislike, visible "reset memory"); feedback nudges a later ranking within
+   the session. Stdlib `http.server` (Streamlit won't build on Python 3.14).
+3. **Feature 9 — privacy-safe logging, evidence, and presentation.**
+4. **Optional:** a Gemini structured-intent parser behind `IntentParser.parse`.
+5. **Human sign-off** remains outstanding — the catalog representative/outlier
    review, the AI-drafted context guides, and the `ai_interactions.md`/voice-card
    drafts.

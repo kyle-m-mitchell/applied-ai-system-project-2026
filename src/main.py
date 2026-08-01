@@ -15,14 +15,24 @@ import os
 import sys
 from pathlib import Path
 
-from src.companion import MusicCompanion
-from src.contracts import CompanionResponse, RecommendationRequest, RecommendationResult
-from src.recommender import load_songs
-from src.retrieval import build_default_retriever, load_context_guides
-from src.service import RecommendationService
-
-
+# Make the app runnable both as a module (`python -m src.main`) and as a script
+# (`python src/main.py` or the IDE run button) by ensuring the repo root — which
+# holds the importable `src` package — is on the path before the `src` imports.
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from src.companion import MusicCompanion  # noqa: E402
+from src.contracts import (  # noqa: E402
+    CompanionResponse,
+    RecommendationRequest,
+    RecommendationResult,
+)
+from src.recommender import load_songs  # noqa: E402
+from src.retrieval import build_default_retriever, load_context_guides  # noqa: E402
+from src.service import RecommendationService  # noqa: E402
+
+
 CATALOG_PATH = REPO_ROOT / "data" / "songs.csv"
 GUIDES_DIR = REPO_ROOT / "data" / "context_guides"
 CATALOG_CACHE = REPO_ROOT / "data" / "embeddings" / "catalog.json"
@@ -107,10 +117,18 @@ def _build_companion(catalog, guides) -> MusicCompanion:
 
 
 def print_companion_response(
-    query: str, response: CompanionResponse, *, show_trace: bool = False
+    response: CompanionResponse, *, show_trace: bool = False
 ) -> None:
-    """Print Cadence's voiced response plus a compact, privacy-safe trace line."""
-    print(f'\n🎧  You asked: "{query}"\n')
+    """Print Cadence's voiced response plus a compact, privacy-safe trace line.
+
+    Echoes only the *sanitized* query (PII/secrets already redacted), never the
+    raw input — so captured terminal output can't retain an email or key.
+    """
+    shown = response.intent.query if response.intent is not None else ""
+    if shown:
+        print(f'\n🎧  You asked: "{shown}"\n')
+    else:
+        print("\n🎧  Cadence\n")
     print(response.message)
 
     trace = response.trace
@@ -156,7 +174,7 @@ def main() -> None:
         catalog = RecommendationService(load_songs(str(CATALOG_PATH))).catalog
         guides = load_context_guides(str(GUIDES_DIR))
         companion = _build_companion(catalog, guides)
-        print_companion_response(query, companion.respond(query), show_trace=show_trace)
+        print_companion_response(companion.respond(query), show_trace=show_trace)
     else:
         run_structured_demo()
 

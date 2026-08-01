@@ -1,10 +1,15 @@
 """Grounding evaluator: the guardrail before the companion speaks.
 
-It checks a result is trustworthy — real ids, no duplicates, hard constraints
-held, evidence present, within the requested count — and that a rendered message
-mentions only tracks that were actually retrieved. This is what lets an optional
-generated voice be trusted: anything it invents is caught here and the system
-falls back to the deterministic voice.
+``evaluate_result`` is the strong check: it confirms a result is trustworthy —
+real ids, no duplicates, hard constraints held, evidence present, within the
+requested count.
+
+``check_grounded_text`` is a narrower, defense-in-depth check on *generated
+framing only*. It does not parse arbitrary claims; it flags a **quoted** title
+that is not in the evidence. That is sufficient here because the authoritative
+track list is always rendered deterministically by the system, so a generator
+can never change *which* tracks are recommended — only its framing prose is at
+risk, and a quoted invented title is the most likely way that shows up.
 """
 
 from __future__ import annotations
@@ -54,7 +59,12 @@ class GroundingEvaluator:
         text: str,
         allowed_titles: Collection[str],
     ) -> EvaluationReport:
-        """Reject a message that quotes a song title not in the evidence packet."""
+        """Reject framing that quotes a title/name not in the evidence.
+
+        Narrow by design (see the module docstring): it catches quoted names, not
+        every conceivable claim — the track facts themselves are never the
+        generator's to produce.
+        """
         if not text or not text.strip():
             return EvaluationReport(ok=False, failures=("empty message",))
         allowed = {title.casefold() for title in allowed_titles}

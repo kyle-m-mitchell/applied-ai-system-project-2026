@@ -59,28 +59,31 @@ class _Boom(TextGenerator):
 
 
 def test_deterministic_voice_is_grounded():
-    message, source, fallback = CadenceVoice().render(HITS, INTENT, generator=None)
-    assert source is VoiceSource.TEMPLATE
-    assert fallback is None
-    assert "Focus Flow" in message and "Blue Desk Lamp" in message
+    result = CadenceVoice().render(HITS, INTENT, generator=None)
+    assert result.source is VoiceSource.TEMPLATE
+    assert result.fallback_reason is None and result.model is None
+    assert "Focus Flow" in result.message and "Blue Desk Lamp" in result.message
 
 
-def test_fake_generator_produces_grounded_gemini_voice():
-    message, source, fallback = CadenceVoice().render(HITS, INTENT, generator=FakeTextGenerator())
-    assert source is VoiceSource.GEMINI
-    assert fallback is None
-    assert "Focus Flow" in message  # authoritative track list still supplied by us
+def test_fake_generator_produces_grounded_generated_voice():
+    result = CadenceVoice().render(HITS, INTENT, generator=FakeTextGenerator())
+    assert result.source is VoiceSource.GENERATED
+    assert result.model == "fake-generator-v1"  # records which generator ran
+    assert result.text_evaluation is not None and result.text_evaluation.ok
+    assert "Focus Flow" in result.message  # authoritative track list still supplied by us
 
 
 def test_invented_song_is_caught_and_falls_back():
-    message, source, fallback = CadenceVoice().render(HITS, INTENT, generator=_Inventing())
-    assert source is VoiceSource.TEMPLATE
-    assert fallback and "grounding" in fallback
-    assert "Ghost Town Radio" not in message  # the ungrounded framing was discarded
+    result = CadenceVoice().render(HITS, INTENT, generator=_Inventing())
+    assert result.source is VoiceSource.TEMPLATE
+    assert result.fallback_reason and "grounding" in result.fallback_reason
+    assert "Ghost Town Radio" not in result.message  # ungrounded framing discarded
+    # the failing grounding report is preserved, not silently dropped
+    assert result.text_evaluation is not None and not result.text_evaluation.ok
 
 
 def test_generation_error_falls_back():
-    message, source, fallback = CadenceVoice().render(HITS, INTENT, generator=_Boom())
-    assert source is VoiceSource.TEMPLATE
-    assert fallback == "generation failed"
-    assert "Focus Flow" in message
+    result = CadenceVoice().render(HITS, INTENT, generator=_Boom())
+    assert result.source is VoiceSource.TEMPLATE
+    assert result.fallback_reason == "generation failed"
+    assert "Focus Flow" in result.message

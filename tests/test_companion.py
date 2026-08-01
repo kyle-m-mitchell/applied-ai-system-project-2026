@@ -93,7 +93,8 @@ def test_sensitive_query_never_uses_the_generator(companion_with_voice):
     assert "alice@example.com" not in str(result.trace.model_dump())  # no raw PII in trace
 
 
-def test_generator_path_yields_a_gemini_voice(companion_with_voice):
+def test_generator_path_yields_a_generated_voice(companion_with_voice):
     result = companion_with_voice.respond("upbeat party music", limit=5)
     assert result.action is CompanionAction.RECOMMEND
-    assert result.trace.voice_source is VoiceSource.GEMINI
+    assert result.trace.voice_source is VoiceSource.GENERATED
+    assert result.trace.voice_model == "fake-generator-v1"  # records which generator

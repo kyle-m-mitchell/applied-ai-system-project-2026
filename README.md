@@ -60,7 +60,7 @@ improves behavior.
 
 ### Algorithm recipe
 
-Each song earns points from six weighted sub-scores. Every sub-score is 0–1
+Each song earns points from seven weighted sub-scores. Every sub-score is 0–1
 *before* its weight is applied:
 
 | Feature | How it's matched | Weight |
@@ -152,7 +152,7 @@ model — as a standalone component in [`src/retrieval.py`](src/retrieval.py):
 **Honesty boundary.** The public `RecommendationRequest` still accepts *only*
 structured preferences — there is deliberately no natural-language `query` field
 yet. That entry point arrives with the input/privacy guard and intent parser in a
-later phase. The retriever is exercised directly by tests and the demo below.
+later feature. The retriever is exercised directly by tests and the demo below.
 
 **Limitation by design.** TF-IDF is *lexical*, not semantic: it matches word
 forms, so `"studying"` does not match the catalog's `"study"`. Context guides
@@ -212,10 +212,10 @@ The design keeps a live API from hurting reproducibility:
 The key is read only from `GEMINI_API_KEY` in a git-ignored `.env` — never code,
 logs, or commits.
 
-### The natural-language front door (Phase 4)
+### The natural-language front door (Feature 5)
 
 Until now, retrieval was reachable only through the demo — the public app
-accepted no free text, on purpose. Phase 4 adds the missing front half so a typed
+accepted no free text, on purpose. Feature 5 adds the missing front half so a typed
 sentence can enter honestly:
 
 1. **Input/privacy guard** ([`src/guard.py`](src/guard.py)) — rejects oversized
@@ -244,7 +244,7 @@ python -m src.main                  # -> the original structured scorer, unchang
 Natural language enters through `MusicCompanion`, not a `query` field on the
 structured `RecommendationRequest` — the trusted scorer path stays pure.
 
-### The bounded agent and Cadence's voice (Phase 5)
+### The bounded agent and Cadence's voice (Feature 6)
 
 `MusicCompanion` is a **bounded agent**: guard → intent → retrieve → **MMR
 diversity** → **grounding evaluator** → **Cadence's voice**, choosing from a small
@@ -334,10 +334,12 @@ flowchart TD
 ### Applied AI target architecture
 
 The implementation roadmap is captured in the canonical
-[Mermaid source](diagrams/architecture.mmd). It will be kept synchronized with
-the code as each feature is implemented. A rendered
-[PNG preview](assets/architecture.png) is included for convenience; the Mermaid
-file is the authoritative submission artifact.
+[Mermaid source](diagrams/architecture.mmd), kept synchronized with the code as
+each feature lands — it is the authoritative artifact. The
+[PNG preview](assets/architecture.png) is a convenience export that can **lag the
+source**; regenerate it from the current `.mmd` (e.g. the Mermaid Live Editor at
+mermaid.live, or `mmdc -i diagrams/architecture.mmd -o assets/architecture.png`)
+before submission.
 
 ![Explainable AI Music Concierge architecture](assets/architecture.png)
 
@@ -429,10 +431,10 @@ query expansion, expansion provenance, the dominance threshold, the
 guides-as-evidence-not-recommendations rule, a fingerprint that covers both
 sources' content and the expansion settings; new in Feature 4 — the embedding
 cache, semantic and hybrid retrieval, the exact blend math, honest `DEGRADED`
-fallback, and the query cache; and — new in Phase 4 — the input/privacy guard
+fallback, and the query cache; and — new in Feature 5 — the input/privacy guard
 (PII/secret redaction, injection stripping, crisis → safe response), the
 deterministic intent parser, and the `MusicCompanion` (recommend / clarify /
-no-match / safe / sensitive-stays-local); and — new in Phase 5 — MMR diversity,
+no-match / safe / sensitive-stays-local); and — new in Feature 6 — MMR diversity,
 the grounding evaluator (ids, constraints, evidence, and invented-song detection),
 Cadence's voice (deterministic + a stubbed generator, with fallback on
 ungrounded/failed generation), and the privacy-safe agent trace. Every test runs
@@ -705,8 +707,9 @@ case-insensitive matching) fixes the ranking-level failures:
   text and query text to Google's Gemini API. Under the free-tier terms, that
   content may be used to improve products and reviewed by humans, so no secrets
   or personal data should be embedded. The app runs fully locally without a key.
-- Companion behavior, provider privacy controls, and grounded output evaluation
-  are target features, not current behavior.
+- The companion behavior, the input/privacy guard, and grounded output evaluation
+  are implemented (deterministic, offline-safe). Still ahead: session memory, a
+  Streamlit UI, privacy-safe logging, and the evaluation harness.
 
 See the [Model Card](model_card.md), [Catalog Data Card](docs/CATALOG_DATA_CARD.md),
 and [Project Handbook](docs/PROJECT_HANDBOOK.md) for deeper analysis.

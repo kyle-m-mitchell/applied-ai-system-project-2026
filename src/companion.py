@@ -122,10 +122,8 @@ class MusicCompanion:
 
         # Sensitive queries never reach the language provider either.
         generator = None if sensitive else self._generator
-        message, voice_source, voice_fallback = self._voice.render(
-            diversified, intent, generator=generator
-        )
-        message = self._decorate(message, verdict.category)
+        voice = self._voice.render(diversified, intent, generator=generator)
+        message = self._decorate(voice.message, verdict.category)
 
         action = (
             CompanionAction.DEGRADED
@@ -143,9 +141,11 @@ class MusicCompanion:
                 retrieved_ids=tuple(hit.track.id for hit in diversified),
                 diversity_applied=diversity_applied,
                 evaluation=evaluation,
+                text_evaluation=voice.text_evaluation,
                 action=action,
-                voice_source=voice_source,
-                fallback_reason=voice_fallback,
+                voice_source=voice.source,
+                voice_model=voice.model,
+                fallback_reason=voice.fallback_reason,
             ),
         )
 

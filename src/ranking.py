@@ -30,17 +30,26 @@ def mmr_rerank(
     k: int,
     *,
     lambda_: float = 0.7,
+    relevance_floor: float = 0.5,
 ) -> tuple[RetrievalHit, ...]:
     """Re-rank ``hits`` by MMR, returning up to ``k`` diverse-but-relevant hits.
 
     Each step picks the hit maximizing ``lambda_ * relevance - (1 - lambda_) *
     max_similarity_to_already_selected``. The first pick is pure relevance, so
     the most relevant track always leads; ties break by lower track id.
+
+    A ``relevance_floor`` (fraction of the top hit's score) gates eligibility, so
+    a weak candidate can never displace a stronger one purely for variety — if the
+    strong candidates are all similar, we return fewer rather than pad with weak,
+    off-topic filler.
     """
     if k < 1:
         raise ValueError("k must be at least 1")
+    if not hits:
+        return ()
 
-    remaining = list(hits)
+    floor = max(hit.score for hit in hits) * relevance_floor
+    remaining = [hit for hit in hits if hit.score >= floor]
     selected: list[RetrievalHit] = []
     while remaining and len(selected) < k:
         best: RetrievalHit | None = None

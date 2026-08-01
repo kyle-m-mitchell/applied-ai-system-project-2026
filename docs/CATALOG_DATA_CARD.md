@@ -182,12 +182,12 @@ Verification command:
 python -m pytest -q
 ```
 
-Verified result on 2026-07-30 (Features 3/3b/4 + Phases 4–5 added retrieval,
+Verified result on 2026-07-31 (Features 3/3b/4 + Features 5–6 added retrieval,
 context-guide, embedding/hybrid, guard/intent/companion, and ranking/evaluator/
 voice tests, all offline):
 
 ```text
-113 passed
+115 passed
 ```
 
 ## Human review protocol

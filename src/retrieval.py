@@ -531,11 +531,9 @@ class EmbeddingRetriever(Retriever):
         return self._usable
 
     def _embed_query(self, query: str) -> tuple[float, ...]:
-        """Embed the query, retrying once before giving up."""
-        try:
-            return self._embedder.embed_query(query)
-        except Exception:  # noqa: BLE001 - one bounded retry, then fall back
-            return self._embedder.embed_query(query)
+        """Embed the query once. The single retry lives in the provider adapter's
+        ``_post`` (retrying here as well would multiply attempts and delay)."""
+        return self._embedder.embed_query(query)
 
     def _degraded(
         self, query: str, k: int, instrumental_only: bool, exclude_explicit: bool

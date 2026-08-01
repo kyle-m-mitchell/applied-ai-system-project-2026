@@ -40,10 +40,16 @@ safe_response / degraded`) and emitting a privacy-safe `AgentTrace`. Example
 trace for `"clean chill beats for studying, no vocals"`:
 
 ```
-guard_category=ok · intent(instrumental_only=True, clean=True)
-retrieved_ids=(...) · diversity_applied=True · evaluation.ok=True
-action=recommend · voice_source=gemini
+guard_category=ok · intent(mood=chill, instrumental_only=True, clean=True)
+retrieved_ids=(4, 47, 12) · diversity_applied=True · evaluation.ok=True
+text_evaluation.ok=True · action=recommend
+voice_source=generated · voice_model=fake-generator-v1
 ```
+
+A sensitive query (e.g. one containing an email) produces
+`guard_category=sensitive`, the email redacted before retrieval, and
+`voice_source=template` — the language provider is never consulted, and no raw
+text appears in the trace. Reproduce with `python -m src.main --trace "<query>"`.
 
 **What did you verify or fix manually?**
 
