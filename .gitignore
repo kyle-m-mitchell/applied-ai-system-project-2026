@@ -11,6 +11,10 @@ venv/
 # Secrets — never commit real API keys
 .env
 
+# Evaluation: commit the accepted baseline, ignore the transient latest run
+eval/results/latest.json
+eval/results/latest.md
+
 # OS files
 .DS_Store
 
