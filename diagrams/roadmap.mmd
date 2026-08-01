@@ -1,21 +1,24 @@
-%% AI Music Companion — IMPLEMENTED architecture (what exists and is tested today).
-%% For the intended end state (planned UI, memory, logging, eval report, structured
-%% ranking), see diagrams/roadmap.mmd. Solid arrows = runtime/indexing data flow;
-%% dotted arrows = dependency, testing, or provider capability.
+%% AI Music Companion — TARGET / ROADMAP architecture (includes planned components)
+%% This is the intended end state. For what actually exists today, see
+%% diagrams/architecture.mmd. Solid arrows = runtime/indexing data flow;
+%% dotted arrows = dependency, testing, or observability.
+%% Still planned here: Streamlit UI, session-only memory + feedback, privacy-safe
+%% JSONL logs, the evaluation report, structured-preference ranking, and a
+%% provider structured-intent parser.
 
 flowchart TB
-    subgraph RUNTIME["Runtime request and response (CLI)"]
+    subgraph RUNTIME["Runtime request and response"]
         direction LR
         LISTENER(["Listener"])
-        APP["CLI<br/>RecommendationService + MusicCompanion"]
+        APP["Streamlit UI or CLI<br/>RecommendationService + MusicCompanion"]
         INPUT_GUARD["Input + privacy guard<br/>size · PII/secret redaction · injection · crisis safe-response"]
-        AGENT["MusicCompanion — bounded agent<br/>rule intent parser + allowlisted actions + privacy-safe trace"]
+        AGENT["MusicCompanion — bounded agent<br/>intent parser (rule now, provider structured-intent planned)<br/>allowlisted actions + privacy-safe trace"]
         RETRIEVER["Retriever interface<br/>TF-IDF · context guides · Gemini embeddings · hybrid + provenance"]
-        RANKER["Hard filters + semantic/lexical hybrid + MMR diversity"]
-        EVALUATOR["Grounding evaluator<br/>result: ids · duplicates · constraints · evidence · count<br/>generated framing: quoted-title check (narrow, defense-in-depth)"]
+        RANKER["Hard filters + fusion + MMR diversity<br/>semantic · lexical · structured-preference (planned) · feedback (planned)"]
+        EVALUATOR["Grounding evaluator<br/>ids · duplicates · constraints · evidence · count · framing grounding"]
         POLICY["Situation policy<br/>recommend · clarify · no-match · safe-response · degraded"]
         VOICE["Cadence voice<br/>deterministic baseline + optional grounded Gemini framing"]
-        OUTPUT_GUARD["Output check (contracts + grounding)<br/>schema · action/hit invariants · framing grounding"]
+        OUTPUT_GUARD["Output check<br/>schema · action/hit invariants · framing grounding"]
         RESULT(["Recommendations<br/>songs · reasons · evidence · operating mode"])
         SAFE(["Fixed safe response<br/>crisis · blocked input"])
         FALLBACK["Local degraded mode<br/>TF-IDF retrieval + deterministic voice (no provider)"]
@@ -37,26 +40,32 @@ flowchart TB
         FALLBACK -. "degraded (TF-IDF)" .-> RETRIEVER
     end
 
-    subgraph GROUNDING["Grounding and provider"]
+    subgraph GROUNDING["Grounding, provider, and session context"]
         direction LR
         CURATOR(["Human curator"])
-        SOURCES[("Validated 200-song catalog<br/>+ curated context guides (query expansion)")]
-        INDEX["Retrieval index<br/>TF-IDF (2 sources) + Gemini embeddings, committed cache<br/>semantic+lexical hybrid"]
-        GEMINI["Gemini provider adapter (stdlib REST, optional)<br/>embeddings + Cadence framing<br/>one retry, then local fallback"]
+        SOURCES[("Validated catalog + curated context guides<br/>(+ real-dataset ingestion, planned)")]
+        INDEX["Retrieval index<br/>TF-IDF (2 sources) + Gemini embeddings, committed cache<br/>semantic+lexical (+structured) hybrid"]
+        MEMORY[("Session-only memory (PLANNED)<br/>preferences · feedback · recent context")]
+        GEMINI["Gemini provider adapter (stdlib REST, optional)<br/>embeddings + Cadence framing · structured intent planned<br/>backoff/retry, then local fallback"]
 
         CURATOR --> SOURCES
         SOURCES --> INDEX
         INDEX --> RETRIEVER
+        MEMORY -->|"session context + feedback"| AGENT
         GEMINI -. "AI capability" .-> APP
     end
 
-    subgraph RELIABILITY["Reliability and human review"]
+    subgraph RELIABILITY["Reliability, evaluation, and human review"]
         direction LR
         TESTER(["Human tester"])
-        TESTS["pytest — 115 offline tests<br/>unit + integration, normal · edge · adversarial · outage"]
+        TESTS["pytest + evaluation harness (harness PLANNED)<br/>golden normal · edge · adversarial · outage cases"]
+        REPORT[("Evaluation report (PLANNED)<br/>quality metrics + pass/fail gates")]
+        LOGS[("Privacy-safe JSONL logs (PLANNED)<br/>ids · scores · modes · outcomes — never raw text")]
 
         TESTER --> TESTS
         TESTS -. "exercises the same service" .-> APP
+        TESTS --> REPORT
+        APP -. "sanitized events" .-> LOGS
     end
 
     classDef human fill:#FFF2CC,stroke:#8A6D1D,stroke-width:2px,color:#2D2408;
@@ -71,6 +80,6 @@ flowchart TB
     class APP interface;
     class AGENT,RETRIEVER,VOICE,GEMINI ai;
     class RANKER,POLICY,FALLBACK,INDEX deterministic;
-    class SOURCES data;
+    class SOURCES,MEMORY,REPORT,LOGS data;
     class INPUT_GUARD,EVALUATOR,SAFE,OUTPUT_GUARD guard;
     class TESTS test;

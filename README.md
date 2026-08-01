@@ -274,7 +274,7 @@ your mind anchored through a long study session.
 2. Digital Raincoat — Future Polaroid [synthwave · chill] — a close match in feel
 3. No Horizon — Pale Current [ambient · chill] — a close match in feel
 ...
-[recommend]  ·  mode: gemini  ·  voice: gemini  ·  diversified
+[recommend]  ·  mode: gemini  ·  voice: generated  ·  diversified
 ```
 
 Add `--trace` to print the full `AgentTrace`. With no key, Cadence still replies
@@ -331,17 +331,21 @@ flowchart TD
     FAM -.-> MOOD
 ```
 
-### Applied AI target architecture
+### Architecture
 
-The implementation roadmap is captured in the canonical
-[Mermaid source](diagrams/architecture.mmd), kept synchronized with the code as
-each feature lands — it is the authoritative artifact. The
-[PNG preview](assets/architecture.png) is a convenience export that can **lag the
-source**; regenerate it from the current `.mmd` (e.g. the Mermaid Live Editor at
+Two Mermaid sources, kept separate on purpose:
+
+- **[`diagrams/architecture.mmd`](diagrams/architecture.mmd)** — *only what is
+  implemented and tested today* (the authoritative artifact).
+- **[`diagrams/roadmap.mmd`](diagrams/roadmap.mmd)** — the target/planned end state
+  (UI, session memory, logging, evaluation report, structured ranking).
+
+The [PNG preview](assets/architecture.png) is a convenience export that can **lag
+the source**; regenerate from the current `.mmd` (Mermaid Live Editor at
 mermaid.live, or `mmdc -i diagrams/architecture.mmd -o assets/architecture.png`)
 before submission.
 
-![Explainable AI Music Concierge architecture](assets/architecture.png)
+![AI Music Companion — implemented architecture](assets/architecture.png)
 
 ### Potential biases and risks
 
@@ -421,7 +425,7 @@ Run all tests with:
 python3 -m pytest
 ```
 
-The current suite contains 113 tests covering the original scorer, validated
+The current suite contains 115 tests covering the original scorer, validated
 contracts, compatibility, normalization, malformed input, 200-track balance,
 legacy preservation, retrieval-metadata integrity, schema drift, new-genre
 service behavior, non-mutation, TF-IDF retrieval relevance, provenance, hard

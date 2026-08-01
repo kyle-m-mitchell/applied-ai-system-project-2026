@@ -568,8 +568,8 @@ returns a useful labeled result.
 - [x] Grounding evaluator (`src/evaluator.py`): validates ids/dupes/constraints/evidence, and that a generated message quotes only retrieved tracks.
 - [x] Cadence voice (`src/voice.py` + `docs/CADENCE_VOICE.md`): deterministic baseline + optional grounded Gemini renderer that names no songs and passes the grounding check, degrading to the template voice on failure/no-key.
 - [x] Provider text via stdlib REST (`src/generation.py`, `gemini-flash-lite-latest`); sensitive input reaches **neither** the retrieval nor the language provider.
-- [x] Live voice validated: `python -m src.main "clean chill beats for studying, no vocals"` → a grounded Cadence framing + diverse set, `mode: gemini`, `voice: gemini`; a PII query → `mode: local`, `voice: template`.
-- [x] `tests/test_{ranking,evaluator,voice}.py` + companion trace tests pass; full suite `113 passed` on 2026-07-30, fully offline.
+- [x] Live voice validated: `python -m src.main "clean chill beats for studying, no vocals"` → a grounded Cadence framing + diverse set, `mode: gemini`, `voice: generated`; a PII query → `mode: local`, `voice: template`.
+- [x] `tests/test_{ranking,evaluator,voice}.py` + companion trace tests pass; full suite `115 passed` (2026-07-31, after the Step-1 stabilization pass), fully offline.
 - [x] `ai_interactions.md` drafted (SF8 agentic workflow + SF10 Strategy/Factory pattern).
 
 The 55/35/10 hybrid with the numeric scorer + session feedback remains partial:
@@ -602,8 +602,11 @@ provider calls can be faked, and failures are actionable rather than hidden.
 
 ### Feature 8 — session feedback and web UI
 
-Status: **Planned** (stdlib `http.server` UI — Streamlit's `pyarrow` chain will
-not build on Python 3.14).
+Status: **Planned** (Streamlit UI — Streamlit officially supports Python
+3.10–3.14, has `AppTest` for UI-flow tests, and free Community Cloud hosting; an
+earlier "won't build on 3.14" note was wrong). Built around the companion service,
+not duplicating logic. The UI moves earlier in the plan (before real-data
+ingestion) because it surfaces product problems a CLI hides.
 
 Create the working companion interface with chat input, recommendation cards,
 reason/evidence display, operating-mode/voice badges, like/dislike controls, and
@@ -874,7 +877,7 @@ pass. Next, in order:
 2. **Feature 8 — session feedback + stdlib web UI.** A clickable companion (chat
    input, recommendation cards, evidence, operating-mode/voice badges,
    like/dislike, visible "reset memory"); feedback nudges a later ranking within
-   the session. Stdlib `http.server` (Streamlit won't build on Python 3.14).
+   the session. Built with Streamlit (supports Python 3.10–3.14; AppTest + free Community Cloud).
 3. **Feature 9 — privacy-safe logging, evidence, and presentation.**
 4. **Optional:** a Gemini structured-intent parser behind `IntentParser.parse`.
 5. **Human sign-off** remains outstanding — the catalog representative/outlier
