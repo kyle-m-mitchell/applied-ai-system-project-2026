@@ -1,0 +1,5 @@
+# Lean engine/runtime dependencies (CLI, evaluator, and local fallback).
+pydantic>=2.13.4,<3
+
+# Pure-Python CA bundle for the optional Gemini HTTPS path.
+certifi>=2026.7.22

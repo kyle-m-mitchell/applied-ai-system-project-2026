@@ -1,4 +1,4 @@
-"""Tests for curated context guides and guide-driven query expansion."""
+"""Tests for versioned context guides and guide-driven query expansion."""
 
 from __future__ import annotations
 

@@ -11,7 +11,7 @@ provider — and the trace records categories and ids, never raw sensitive text.
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from uuid import uuid4
 
 from src.contracts import (
@@ -19,11 +19,18 @@ from src.contracts import (
     CatalogTrack,
     CompanionAction,
     CompanionResponse,
+    CompanionTurn,
     ContextGuide,
+    EmbeddingSource,
     EvaluationReport,
+    ExecutionPolicy,
     GuardCategory,
     MusicIntent,
     OperatingMode,
+    PipelineReceipt,
+    RetrievalHit,
+    SignalComparison,
+    SignalRow,
     VoiceSource,
 )
 from src.evaluator import GroundingEvaluator
@@ -32,7 +39,8 @@ from src.generation import TextGenerator
 from src.guard import InputGuard
 from src.intent import IntentParser
 from src.observability import EventSink, NullEventSink, build_event
-from src.ranking import mmr_rerank, mood_similarity
+from src.ranking import diversity_parameters, mmr_rerank, mood_similarity
+from src.refine import combine_guard_categories, merge_intents
 from src.retrieval import Retriever, TfidfRetriever
 from src.scoring import candidates_from_hits
 from src.voice import CadenceVoice
@@ -42,6 +50,29 @@ SAFE_RESPONSE_MESSAGE = (
     "I can only help with music, and it sounds like you may be going through "
     "something serious. I'm not able to help with that — but please consider "
     "reaching out to someone you trust or your local emergency services."
+)
+
+# Only parser/UI-owned identifiers may appear verbatim in a privacy-safe trace.
+# A public MusicIntent may carry an extension cue, but user-authored text must
+# never hitch a ride through ``cue_id`` into JSONL or the developer drawer.
+TRACE_CUE_IDS = frozenset(
+    {
+        "energy_low_v1",
+        "energy_high_v1",
+        "acoustic_high_v1",
+        "acoustic_low_v1",
+        "valence_high_v1",
+        "valence_low_v1",
+        "dance_high_v1",
+        "dance_low_v1",
+        "tempo_near_v1",
+        "tempo_range_v1",
+        "tempo_atleast_v1",
+        "tempo_atmost_v1",
+        "tempo_near_ui_v1",
+        "ui_danceability_low_v1",
+        "ui_acousticness_low_v1",
+    }
 )
 
 
@@ -65,6 +96,8 @@ class MusicCompanion:
         self._voice = CadenceVoice(self._evaluator)
         self._generator = generator
         self._valid_ids = {track.id for track in tracks}
+        self._valid_genres = {track.genre for track in tracks}
+        self._valid_moods = {track.mood for track in tracks}
         self._local = (
             local_retriever if local_retriever is not None else TfidfRetriever(tracks, guides)
         )
@@ -72,19 +105,119 @@ class MusicCompanion:
         self._events = event_sink if event_sink is not None else NullEventSink()
         self._config_fingerprint = config_fingerprint
 
-    def respond(self, text: str, *, limit: int = 5) -> CompanionResponse:
+    def respond(
+        self,
+        text: str,
+        *,
+        limit: int = 5,
+        policy: ExecutionPolicy | None = None,
+    ) -> CompanionResponse:
         """Guard, parse, retrieve, diversify, evaluate, and voice one query.
 
         A thin public wrapper: it times the turn, mints an ephemeral request id,
         and emits one privacy-safe receipt to the event sink. The decision logic
         lives in ``_respond``; emission never alters or blocks the response.
         """
+        return self.respond_detailed(text, limit=limit, policy=policy).response
+
+    def respond_detailed(
+        self,
+        text: str,
+        *,
+        limit: int = 5,
+        policy: ExecutionPolicy | None = None,
+    ) -> CompanionTurn:
+        """Return the response plus request-local diagnostics for a trusted UI."""
+        selected_policy = policy or ExecutionPolicy()
+        return self._recorded(
+            lambda: self._respond(text, limit=limit, policy=selected_policy),
+            selected_policy,
+        )
+
+    def respond_with_intent(
+        self,
+        intent: MusicIntent,
+        *,
+        category: GuardCategory,
+        policy: ExecutionPolicy | None = None,
+    ) -> CompanionResponse:
+        """Re-run a typed intent while re-inspecting its query for safety.
+
+        ``category`` is deliberately required: it carries sticky sensitivity
+        from the guarded turn that produced the intent.  The query is inspected
+        again, so constructing a ``MusicIntent`` manually cannot bypass the guard.
+        """
+        return self.respond_with_intent_detailed(
+            intent, category=category, policy=policy
+        ).response
+
+    def respond_with_intent_detailed(
+        self,
+        intent: MusicIntent,
+        *,
+        category: GuardCategory,
+        policy: ExecutionPolicy | None = None,
+    ) -> CompanionTurn:
+        selected_policy = policy or ExecutionPolicy()
+        return self._recorded(
+            lambda: self._respond_with_intent(
+                intent, category=category, policy=selected_policy
+            ),
+            selected_policy,
+        )
+
+    def refine(
+        self,
+        base_intent: MusicIntent,
+        text: str,
+        *,
+        base_category: GuardCategory,
+        policy: ExecutionPolicy | None = None,
+    ) -> CompanionResponse:
+        """Guard a follow-up, merge its parsed facets, and run one new turn."""
+        return self.refine_detailed(
+            base_intent,
+            text,
+            base_category=base_category,
+            policy=policy,
+        ).response
+
+    def refine_detailed(
+        self,
+        base_intent: MusicIntent,
+        text: str,
+        *,
+        base_category: GuardCategory,
+        policy: ExecutionPolicy | None = None,
+    ) -> CompanionTurn:
+        selected_policy = policy or ExecutionPolicy()
+        return self._recorded(
+            lambda: self._refine(
+                base_intent,
+                text,
+                base_category=base_category,
+                policy=selected_policy,
+            ),
+            selected_policy,
+        )
+
+    def _recorded(
+        self,
+        operation: Callable[
+            [], tuple[CompanionResponse, tuple[int, ...], SignalComparison | None]
+        ],
+        policy: ExecutionPolicy,
+    ) -> CompanionTurn:
+        """Time one submitted transaction, return its receipt, and emit once."""
         request_id = uuid4().hex
         start = time.perf_counter()
-        response, candidate_ids = self._respond(text, limit=limit)
+        response, candidate_ids, comparison = operation()
         latency_ms = round((time.perf_counter() - start) * 1000, 3)
-        self._emit(request_id, response, candidate_ids, latency_ms)
-        return response
+        receipt = self._receipt(
+            request_id, response, candidate_ids, latency_ms, policy
+        )
+        self._emit(request_id, response, candidate_ids, latency_ms, policy)
+        return CompanionTurn(response=response, receipt=receipt, comparison=comparison)
 
     def _emit(
         self,
@@ -92,6 +225,7 @@ class MusicCompanion:
         response: CompanionResponse,
         candidate_ids: tuple[int, ...],
         latency_ms: float,
+        policy: ExecutionPolicy,
     ) -> None:
         """Record one receipt, best-effort. Logging must never break a response."""
         if isinstance(self._events, NullEventSink):
@@ -108,14 +242,16 @@ class MusicCompanion:
                     candidate_ids=candidate_ids,
                     latency_ms=latency_ms,
                     config_fingerprint=self._config_fingerprint,
+                    force_local=receipt_force_local(response, policy),
+                    diversity=policy.diversity,
                 )
             )
         except Exception:  # noqa: BLE001 - observability is best-effort
             pass
 
     def _respond(
-        self, text: str, *, limit: int = 5
-    ) -> tuple[CompanionResponse, tuple[int, ...]]:
+        self, text: str, *, limit: int = 5, policy: ExecutionPolicy
+    ) -> tuple[CompanionResponse, tuple[int, ...], SignalComparison | None]:
         """Run the bounded flow, returning the response and the candidate-pool ids."""
         verdict = self._guard.inspect(text)
 
@@ -123,6 +259,7 @@ class MusicCompanion:
             return (
                 self._simple(verdict.category, CompanionAction.SAFE_RESPONSE, SAFE_RESPONSE_MESSAGE),
                 (),
+                None,
             )
         if verdict.category in (GuardCategory.EMPTY, GuardCategory.TOO_LONG):
             return (
@@ -132,6 +269,7 @@ class MusicCompanion:
                     "Tell me in a few words what you'd like to hear.",
                 ),
                 (),
+                None,
             )
 
         intent = self._parser.parse(verdict.sanitized_query, limit=limit)
@@ -144,14 +282,155 @@ class MusicCompanion:
                     intent=intent,
                 ),
                 (),
+                None,
             )
 
+        return self._retrieve_and_voice(intent, verdict.category, policy=policy)
+
+    def _respond_with_intent(
+        self,
+        intent: MusicIntent,
+        *,
+        category: GuardCategory,
+        policy: ExecutionPolicy,
+    ) -> tuple[CompanionResponse, tuple[int, ...], SignalComparison | None]:
+        """Validate the trusted-intent boundary before executing it."""
+        verdict = self._guard.inspect(intent.query)
+        combined = combine_guard_categories(category, verdict.category)
+        if combined is GuardCategory.HIGH_RISK:
+            return (
+                self._simple(combined, CompanionAction.SAFE_RESPONSE, SAFE_RESPONSE_MESSAGE),
+                (),
+                None,
+            )
+        if verdict.category in (GuardCategory.EMPTY, GuardCategory.TOO_LONG):
+            return (
+                self._simple(
+                    combined,
+                    CompanionAction.CLARIFY,
+                    "Tell me in a few words what you'd like to hear.",
+                    intent=intent,
+                ),
+                (),
+                None,
+            )
+        guarded_intent = intent.model_copy(
+            update={"query": verdict.sanitized_query}
+        )
+        if guarded_intent.needs_clarification:
+            return (
+                self._simple(
+                    combined,
+                    CompanionAction.CLARIFY,
+                    guarded_intent.clarification or "What would you like to hear?",
+                    intent=guarded_intent,
+                ),
+                (),
+                None,
+            )
+        return self._retrieve_and_voice(guarded_intent, combined, policy=policy)
+
+    def _refine(
+        self,
+        base_intent: MusicIntent,
+        text: str,
+        *,
+        base_category: GuardCategory,
+        policy: ExecutionPolicy,
+    ) -> tuple[CompanionResponse, tuple[int, ...], SignalComparison | None]:
+        """Guard and parse one free-text refinement without mutating the base."""
+        base_verdict = self._guard.inspect(base_intent.query)
+        follow_verdict = self._guard.inspect(text)
+        combined = combine_guard_categories(base_category, base_verdict.category)
+        combined = combine_guard_categories(combined, follow_verdict.category)
+        if combined is GuardCategory.HIGH_RISK:
+            return (
+                self._simple(combined, CompanionAction.SAFE_RESPONSE, SAFE_RESPONSE_MESSAGE),
+                (),
+                None,
+            )
+        if follow_verdict.category in (GuardCategory.EMPTY, GuardCategory.TOO_LONG):
+            return (
+                self._simple(
+                    combined,
+                    CompanionAction.CLARIFY,
+                    "Give me one musical change, like ‘calmer’ or ‘more acoustic.’",
+                    intent=base_intent,
+                ),
+                (),
+                None,
+            )
+        follow_intent = self._parser.parse(
+            follow_verdict.sanitized_query, limit=base_intent.limit
+        )
+        if follow_intent.needs_clarification:
+            return (
+                self._simple(
+                    combined,
+                    CompanionAction.CLARIFY,
+                    "I couldn't map that to a musical change yet. Try ‘calmer,’ "
+                    "‘more acoustic,’ ‘brighter,’ or a BPM.",
+                    intent=base_intent,
+                ),
+                (),
+                None,
+            )
+        if not any(
+            (
+                follow_intent.genre,
+                follow_intent.mood,
+                follow_intent.instrumental_only,
+                follow_intent.exclude_explicit,
+                follow_intent.feature_goals,
+            )
+        ):
+            return (
+                self._simple(
+                    combined,
+                    CompanionAction.CLARIFY,
+                    "I couldn't map that to a supported musical change yet. Try "
+                    "‘calmer,’ ‘more acoustic,’ ‘brighter,’ ‘more movement,’ "
+                    "‘instrumental,’ ‘clean,’ or a BPM.",
+                    intent=base_intent,
+                ),
+                (),
+                None,
+            )
+        sanitized_base = base_intent.model_copy(
+            update={"query": base_verdict.sanitized_query}
+        )
+        merged = merge_intents(sanitized_base, follow_intent)
+        merged_verdict = self._guard.inspect(merged.query)
+        combined = combine_guard_categories(combined, merged_verdict.category)
+        if merged_verdict.category is GuardCategory.TOO_LONG:
+            return (
+                self._simple(
+                    combined,
+                    CompanionAction.CLARIFY,
+                    "That refinement thread is getting long. Start a fresh mix with the key idea.",
+                    intent=base_intent,
+                ),
+                (),
+                None,
+            )
+        merged = merged.model_copy(update={"query": merged_verdict.sanitized_query})
+        return self._retrieve_and_voice(merged, combined, policy=policy)
+
+    def _retrieve_and_voice(
+        self,
+        intent: MusicIntent,
+        category: GuardCategory,
+        *,
+        policy: ExecutionPolicy,
+    ) -> tuple[CompanionResponse, tuple[int, ...], SignalComparison | None]:
+        """Run the shared post-guard pipeline for text and controlled refinements."""
         # Retrieve a pool, fuse in structured preferences (when present), then
         # diversify down to the requested count. A larger pool when structured
         # signal exists gives the structured leg room to lift a well-matched track
         # from just outside the text top-k; without it, the path is today's exactly.
-        sensitive = verdict.category is GuardCategory.SENSITIVE
-        retriever = self._local if sensitive else self._default
+        sensitive = category is GuardCategory.SENSITIVE
+        force_local = sensitive or policy.force_local
+        retriever = self._local if force_local else self._default
         structured_active = bool(intent.genre or intent.mood or intent.feature_goals)
         pool_k = max(intent.limit * 8, 40) if structured_active else max(intent.limit * 4, 12)
         pool = retriever.search(
@@ -161,20 +440,41 @@ class MusicCompanion:
             exclude_explicit=intent.exclude_explicit,
         )
         candidate_ids = tuple(hit.track.id for hit in pool.hits)
+        # Keep the pre-fusion pool so the developer view can show, honestly, how
+        # the same candidates would rank under text alone vs structured vs fused.
+        text_hits = pool.hits
         if structured_active and pool.hits:
             pool = pool.model_copy(update={"hits": fuse_pool(intent, pool.hits)})
+        comparison = _build_comparison(text_hits, pool.hits, structured_active)
         # When a genre is explicitly requested, diversify by mood *within* it
         # rather than dragging in other genres against the listener's wish.
         similarity = mood_similarity if intent.genre else None
+        lambda_, relevance_floor = diversity_parameters(policy.diversity)
         diversified = (
-            mmr_rerank(pool.hits, intent.limit, similarity=similarity) if pool.hits else ()
+            mmr_rerank(
+                pool.hits,
+                intent.limit,
+                lambda_=lambda_,
+                relevance_floor=relevance_floor,
+                similarity=similarity,
+            )
+            if pool.hits
+            else ()
         )
-        diversity_applied = len(pool.hits) > intent.limit
+        # MMR runs for every non-empty pool and can reorder even when the pool is
+        # smaller than the requested limit. Report what actually happened, not a
+        # size-based proxy that can make the trace contradict the visible order.
+        diversity_applied = diversified != tuple(pool.hits[: intent.limit])
         result = pool.model_copy(update={"hits": diversified})
 
         evaluation = self._evaluator.evaluate_result(intent, diversified, self._valid_ids)
 
         if not diversified or not evaluation.ok:
+            # The trace and request-local receipt retain the attempted/rejected
+            # candidate IDs for diagnosis. The public result must not carry hits
+            # that failed the output evaluator: NO_MATCH means exactly zero
+            # publishable recommendations.
+            empty_result = result.model_copy(update={"hits": ()})
             return (
                 CompanionResponse(
                     action=CompanionAction.NO_MATCH,
@@ -182,25 +482,36 @@ class MusicCompanion:
                         "I couldn't find a match I can stand behind for that. "
                         "Try naming a genre, a mood, or an activity."
                     ),
-                    retrieval=result,
+                    retrieval=empty_result,
                     intent=intent,
                     trace=AgentTrace(
-                        guard_category=verdict.category,
+                        guard_category=category,
                         intent_summary=self._intent_summary(intent),
                         retrieved_ids=tuple(hit.track.id for hit in diversified),
                         diversity_applied=diversity_applied,
                         evaluation=evaluation,
                         action=CompanionAction.NO_MATCH,
+                        network_used=(
+                            result.embedding_source is EmbeddingSource.LIVE
+                        ),
                         fallback_reason=None if diversified else "no candidates",
                     ),
                 ),
                 candidate_ids,
+                comparison,
             )
 
         # Sensitive queries never reach the language provider either.
-        generator = None if sensitive else self._generator
+        provider_failed = (
+            result.operating_mode is OperatingMode.DEGRADED
+            and result.embedding_source is EmbeddingSource.LIVE
+        )
+        # One failed provider leg is enough for this interactive turn. Do not
+        # immediately spend a second retry budget on optional microcopy selection.
+        generator = None if force_local or provider_failed else self._generator
         voice = self._voice.render(diversified, intent, generator=generator)
-        message = self._decorate(voice.message, verdict.category)
+        message = self._decorate(voice.message, category)
+        intro_message = self._decorate(voice.framing, category)
 
         action = (
             CompanionAction.DEGRADED
@@ -211,10 +522,11 @@ class MusicCompanion:
             CompanionResponse(
                 action=action,
                 message=message,
+                intro_message=intro_message,
                 retrieval=result,
                 intent=intent,
                 trace=AgentTrace(
-                    guard_category=verdict.category,
+                    guard_category=category,
                     intent_summary=self._intent_summary(intent),
                     retrieved_ids=tuple(hit.track.id for hit in diversified),
                     diversity_applied=diversity_applied,
@@ -223,10 +535,44 @@ class MusicCompanion:
                     action=action,
                     voice_source=voice.source,
                     voice_model=voice.model,
+                    network_used=(
+                        result.embedding_source is EmbeddingSource.LIVE
+                    )
+                    or voice.network_used,
                     fallback_reason=voice.fallback_reason,
                 ),
             ),
             candidate_ids,
+            comparison,
+        )
+
+    def _receipt(
+        self,
+        request_id: str,
+        response: CompanionResponse,
+        candidate_ids: tuple[int, ...],
+        latency_ms: float,
+        policy: ExecutionPolicy,
+    ) -> PipelineReceipt:
+        retrieval = response.retrieval
+        trace = response.trace
+        return PipelineReceipt(
+            request_id=request_id,
+            latency_ms=latency_ms,
+            candidate_ids=candidate_ids,
+            final_ids=(
+                tuple(hit.track.id for hit in retrieval.hits) if retrieval else ()
+            ),
+            guard_category=(trace.guard_category if trace else GuardCategory.OK),
+            action=response.action,
+            force_local=receipt_force_local(response, policy),
+            diversity=policy.diversity,
+            embedding_source=(retrieval.embedding_source if retrieval else None),
+            network_used=(trace.network_used if trace else False),
+            operating_mode=(retrieval.operating_mode if retrieval else None),
+            voice_source=(trace.voice_source if trace else None),
+            index_fingerprint=(retrieval.index_fingerprint if retrieval else None),
+            config_fingerprint=self._config_fingerprint,
         )
 
     def _simple(
@@ -241,6 +587,7 @@ class MusicCompanion:
         return CompanionResponse(
             action=action,
             message=message,
+            intro_message=message,
             intent=intent,
             trace=AgentTrace(
                 guard_category=category,
@@ -251,16 +598,23 @@ class MusicCompanion:
             ),
         )
 
-    @staticmethod
-    def _intent_summary(intent: MusicIntent) -> str:
+    def _intent_summary(self, intent: MusicIntent) -> str:
         """A privacy-safe summary (no free-text query) for the trace.
 
-        Feature goals appear as their controlled cue ids (``energy_low_v1``), which
-        are provenance, not user words.
+        Known feature goals appear as controlled cue ids. Unknown extension cues
+        collapse to their typed feature/relation so arbitrary text can never leak
+        through a public manually-constructed intent.
         """
-        goals = ",".join(goal.cue_id for goal in intent.feature_goals)
+        genre = intent.genre if intent.genre in self._valid_genres else None
+        mood = intent.mood if intent.mood in self._valid_moods else None
+        goals = ",".join(
+            goal.cue_id
+            if goal.cue_id in TRACE_CUE_IDS
+            else f"{goal.feature}:{goal.relation.value}"
+            for goal in intent.feature_goals
+        )
         return (
-            f"genre={intent.genre}, mood={intent.mood}, "
+            f"genre={genre}, mood={mood}, "
             f"instrumental_only={intent.instrumental_only}, clean={intent.exclude_explicit}, "
             f"goals=[{goals}]"
         )
@@ -272,3 +626,41 @@ class MusicCompanion:
         if category is GuardCategory.INJECTION:
             return message + "\n(I ignored an instruction embedded in your message.)"
         return message
+
+
+def _build_comparison(
+    text_hits: Sequence[RetrievalHit],
+    fused_hits: Sequence[RetrievalHit],
+    structured_active: bool,
+) -> SignalComparison | None:
+    """Assemble a developer-only per-leg view of the candidate pool.
+
+    ``text_hits`` are the pool before fusion (``score`` is the text leg's
+    semantic+lexical value); ``fused_hits`` carry the fused score and structured
+    relevance. When the structured leg did not run, ``fused`` equals ``text`` and
+    the structured column is ``None`` — shown honestly rather than faked.
+    """
+    if not text_hits:
+        return None
+    text_by_id = {hit.track.id: hit.score for hit in text_hits}
+    rows = tuple(
+        SignalRow(
+            track_id=hit.track.id,
+            title=hit.track.title,
+            text=text_by_id.get(hit.track.id, hit.score),
+            structured=hit.structured_score if structured_active else None,
+            fused=hit.score,
+        )
+        for hit in fused_hits
+    )
+    return SignalComparison(structured_active=structured_active, rows=rows)
+
+
+def receipt_force_local(
+    response: CompanionResponse, policy: ExecutionPolicy
+) -> bool:
+    """Whether local-only execution was effectively enforced for this turn."""
+    trace = response.trace
+    return policy.force_local or (
+        trace is not None and trace.guard_category is GuardCategory.SENSITIVE
+    )

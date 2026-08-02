@@ -5,7 +5,7 @@ It turns each track's descriptive text into a TF-IDF vector and ranks tracks by
 cosine similarity to a query, so requests expressed in words ("late-night study
 beats") can find relevant tracks that the numeric scorer alone cannot.
 
-Feature 3b adds a second source: curated context guides. A guide is not a
+Feature 3b adds a second source: versioned context guides. A guide is not a
 recommendable track. Instead, when a query matches a guide, the guide's
 distinctive catalog-vocabulary terms are folded into the query (query
 expansion), which lets a listener's words ("music to concentrate") reach tracks
@@ -32,6 +32,7 @@ from typing import Any
 from src.contracts import (
     CatalogTrack,
     ContextGuide,
+    EmbeddingSource,
     GuideEvidence,
     OperatingMode,
     RetrievalHit,
@@ -65,7 +66,7 @@ RETRIEVAL_FIELDS: tuple[str, ...] = (
 
 # Bumped whenever the document construction or scoring math changes, so a cached
 # index built by an older method can be detected via the index fingerprint.
-METHOD_ID = "tfidf-v1"
+METHOD_ID = "tfidf-v2"  # v2 drops request/privacy boilerplate from query terms
 
 # Query-expansion tuning: how many matching guides may contribute, how many
 # distinctive terms to take from each, and how dominant a guide must be to count.
@@ -81,7 +82,9 @@ STOPWORDS: frozenset[str] = frozenset(
     {
         "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
         "in", "into", "is", "it", "its", "of", "on", "or", "that", "the",
-        "to", "with", "your", "you",
+        "to", "with", "your", "you", "my", "me", "please", "find", "play",
+        "want", "would", "like", "email", "call", "number", "phone", "contact",
+        "redacted",
     }
 )
 
@@ -90,7 +93,7 @@ _TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 
 
 def _tokenize(text: str) -> list[str]:
-    """Split text into lowercase alphanumeric terms, dropping stopwords."""
+    """Split text into meaningful terms, dropping grammar/privacy boilerplate."""
     return [
         token
         for token in _TOKEN_PATTERN.findall(text.lower())
@@ -111,7 +114,7 @@ def build_document_text(track: CatalogTrack) -> str:
 
 
 def load_context_guides(directory: str) -> list[ContextGuide]:
-    """Load curated context guides from a directory of Markdown files.
+    """Load versioned context guides from a directory of Markdown files.
 
     Each file's first ``# Heading`` is the title and the remainder is the body.
     The file stem is the guide id. Files are read in sorted order for
@@ -253,7 +256,7 @@ class TfidfRetriever(Retriever):
 
     The index is built once at construction. Hard filters (instrumental-only,
     clean-only) are applied *before* ranking, so a high similarity can never
-    override a hard constraint. When curated context guides are supplied, a
+    override a hard constraint. When versioned context guides are supplied, a
     matching guide expands the query toward catalog vocabulary and is recorded
     as evidence.
     """
@@ -523,7 +526,14 @@ class EmbeddingRetriever(Retriever):
         model = cache.embedding_model if cache is not None else EMBEDDING_MODEL
         dimension = cache.dimension if cache is not None else EMBEDDING_DIM
         self._expected_hash = embedding_content_hash(self._tracks, model, dimension)
-        self._usable = cache is not None and cache.content_hash == self._expected_hash
+        expected_ids = set(self._tracks_by_id)
+        self._usable = (
+            cache is not None
+            and cache.content_hash == self._expected_hash
+            and set(cache.vectors) == expected_ids
+            and embedder.model_id == cache.embedding_model
+            and embedder.dimension == cache.dimension
+        )
         self._fingerprint = self._expected_hash
 
     @property
@@ -544,7 +554,16 @@ class EmbeddingRetriever(Retriever):
     def embed_query(self, query: str) -> tuple[float, ...]:
         """Embed the query once (public seam). The single retry lives in the provider
         adapter's ``_post`` — retrying here as well would multiply attempts and delay."""
-        return self._embedder.embed_query(query)
+        vector = self._embedder.embed_query(query)
+        if self._cache is not None and len(vector) != self._cache.dimension:
+            raise ValueError(
+                "query embedding dimension does not match the catalog cache"
+            )
+        return vector
+
+    def query_source(self, query: str) -> EmbeddingSource:
+        """Report cache/local/live provenance without mutating shared state."""
+        return self._embedder.query_source(query)
 
     def vector_for(self, track_id: int) -> tuple[float, ...] | None:
         """Return a track's cached embedding, or ``None`` if absent/uncached.
@@ -556,12 +575,26 @@ class EmbeddingRetriever(Retriever):
         return self._cache.vectors.get(track_id)
 
     def _degraded(
-        self, query: str, k: int, instrumental_only: bool, exclude_explicit: bool
+        self,
+        query: str,
+        k: int,
+        instrumental_only: bool,
+        exclude_explicit: bool,
+        *,
+        embedding_source: EmbeddingSource | None = None,
     ) -> RetrievalResult:
         result = self._fallback.search(
             query, k=k, instrumental_only=instrumental_only, exclude_explicit=exclude_explicit
         )
-        return result.model_copy(update={"operating_mode": OperatingMode.DEGRADED})
+        return result.model_copy(
+            update={
+                "operating_mode": OperatingMode.DEGRADED,
+                # Preserve an attempted LIVE source even though its vector was
+                # not usable. Otherwise a successful lexical fallback could
+                # falsely claim that no provider request occurred.
+                "embedding_source": embedding_source,
+            }
+        )
 
     def search(
         self,
@@ -576,10 +609,18 @@ class EmbeddingRetriever(Retriever):
             raise ValueError("k must be at least 1")
         if not self._usable:
             return self._degraded(query, k, instrumental_only, exclude_explicit)
+        embedding_source: EmbeddingSource | None = None
         try:
+            embedding_source = self.query_source(query)
             query_vector = self.embed_query(query)
         except Exception:  # noqa: BLE001 - provider failed; degrade honestly
-            return self._degraded(query, k, instrumental_only, exclude_explicit)
+            return self._degraded(
+                query,
+                k,
+                instrumental_only,
+                exclude_explicit,
+                embedding_source=embedding_source,
+            )
 
         candidates, filters_applied = _apply_hard_filters(
             self._tracks, instrumental_only, exclude_explicit
@@ -613,6 +654,7 @@ class EmbeddingRetriever(Retriever):
             index_fingerprint=self._fingerprint,
             filters_applied=filters_applied,
             operating_mode=OperatingMode.GEMINI,
+            embedding_source=embedding_source,
         )
 
 
@@ -633,6 +675,7 @@ class HybridRetriever(Retriever):
         *,
         w_semantic: float = W_SEMANTIC,
         w_lexical: float = W_LEXICAL,
+        fallback_mode: OperatingMode = OperatingMode.DEGRADED,
     ) -> None:
         if not tracks:
             raise ValueError("retriever requires at least one track")
@@ -640,6 +683,12 @@ class HybridRetriever(Retriever):
         self._tracks_by_id = {track.id: track for track in self._tracks}
         self._w_semantic = w_semantic
         self._w_lexical = w_lexical
+        self._fusion_version = (
+            f"weighted-sum:sem={w_semantic:g},lex={w_lexical:g};v1"
+        )
+        if fallback_mode not in (OperatingMode.LOCAL, OperatingMode.DEGRADED):
+            raise ValueError("hybrid fallback mode must be local or degraded")
+        self._fallback_mode = fallback_mode
         self._tfidf = TfidfRetriever(self._tracks, guides)
         self._embedding = EmbeddingRetriever(
             self._tracks, embedder, cache, fallback=self._tfidf
@@ -647,7 +696,7 @@ class HybridRetriever(Retriever):
         self._content_hashes = self._tfidf.content_hashes
         self._fingerprint = hashlib.sha256(
             (
-                f"hybrid:{w_semantic},{w_lexical}"
+                f"hybrid:{w_semantic},{w_lexical},{fallback_mode.value}"
                 f"|{self._tfidf.index_fingerprint}|{self._embedding.index_fingerprint}"
             ).encode("utf-8")
         ).hexdigest()
@@ -664,6 +713,8 @@ class HybridRetriever(Retriever):
         instrumental_only: bool,
         exclude_explicit: bool,
         use_guides: bool,
+        *,
+        embedding_source: EmbeddingSource | None = None,
     ) -> RetrievalResult:
         result = self._tfidf.search(
             query,
@@ -672,7 +723,12 @@ class HybridRetriever(Retriever):
             exclude_explicit=exclude_explicit,
             use_guides=use_guides,
         )
-        return result.model_copy(update={"operating_mode": OperatingMode.DEGRADED})
+        return result.model_copy(
+            update={
+                "operating_mode": self._fallback_mode,
+                "embedding_source": embedding_source,
+            }
+        )
 
     def search(
         self,
@@ -688,10 +744,19 @@ class HybridRetriever(Retriever):
             raise ValueError("k must be at least 1")
         if not self._embedding.usable:
             return self._degraded(query, k, instrumental_only, exclude_explicit, use_guides)
+        embedding_source: EmbeddingSource | None = None
         try:
+            embedding_source = self._embedding.query_source(query)
             query_vector = self._embedding.embed_query(query)
         except Exception:  # noqa: BLE001 - provider failed; degrade to lexical
-            return self._degraded(query, k, instrumental_only, exclude_explicit, use_guides)
+            return self._degraded(
+                query,
+                k,
+                instrumental_only,
+                exclude_explicit,
+                use_guides,
+                embedding_source=embedding_source,
+            )
 
         candidates, filters_applied = _apply_hard_filters(
             self._tracks, instrumental_only, exclude_explicit
@@ -721,6 +786,7 @@ class HybridRetriever(Retriever):
                 matched_terms=matched,
                 semantic_score=semantic,
                 lexical_score=lexical,
+                fusion_version=self._fusion_version,
                 track=self._tracks_by_id[track_id],
             )
             for track_id, score, semantic, lexical, matched in blended[:k]
@@ -733,6 +799,7 @@ class HybridRetriever(Retriever):
             guides_used=guides_used,
             expanded_query_terms=expansion_terms,
             operating_mode=OperatingMode.GEMINI,
+            embedding_source=embedding_source,
         )
 
 
@@ -743,6 +810,7 @@ def build_default_retriever(
     catalog_cache_path: str | None = None,
     query_cache_path: str | None = None,
     live_embedder: Embedder | None = None,
+    fallback_mode: OperatingMode = OperatingMode.DEGRADED,
 ) -> Retriever:
     """Return the best retriever available: hybrid if a usable committed
     embedding cache exists, otherwise the local TF-IDF retriever.
@@ -762,15 +830,31 @@ def build_default_retriever(
         return TfidfRetriever(tracks, guides)
 
     embedder: Embedder | None = None
+    compatible_live = (
+        live_embedder
+        if live_embedder is not None
+        and live_embedder.model_id == cache.embedding_model
+        and live_embedder.dimension == cache.dimension
+        else None
+    )
     if query_cache_path is not None and Path(query_cache_path).exists():
         try:
             query_cache = load_query_cache(query_cache_path)
-            if query_cache.embedding_model == cache.embedding_model:
-                embedder = CachedQueryEmbedder(query_cache, fallback=live_embedder)
+            if (
+                query_cache.embedding_model == cache.embedding_model
+                and query_cache.dimension == cache.dimension
+            ):
+                embedder = CachedQueryEmbedder(query_cache, fallback=compatible_live)
         except Exception:  # noqa: BLE001
             embedder = None
-    if embedder is None and live_embedder is not None and live_embedder.model_id == cache.embedding_model:
-        embedder = live_embedder
+    if embedder is None and compatible_live is not None:
+        embedder = compatible_live
     if embedder is None:
         return TfidfRetriever(tracks, guides)
-    return HybridRetriever(tracks, embedder, cache, guides)
+    return HybridRetriever(
+        tracks,
+        embedder,
+        cache,
+        guides,
+        fallback_mode=fallback_mode,
+    )

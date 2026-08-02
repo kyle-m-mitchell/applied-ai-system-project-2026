@@ -78,12 +78,44 @@ def test_missing_evidence_flagged():
     report = GroundingEvaluator().evaluate_result(intent, [_hit(1, evidence=False)], VALID_IDS)
     assert any("evidence" in f for f in report.failures)
 
+    zero_semantic = _hit(1, evidence=False).model_copy(
+        update={"semantic_score": 0.0}
+    )
+    report = GroundingEvaluator().evaluate_result(intent, [zero_semantic], VALID_IDS)
+    assert any("evidence" in f for f in report.failures)
 
-def test_grounded_text_accepts_clean_framing_and_allowed_titles():
-    hits = [_hit(1, title="Focus Flow")]
+
+def test_grounded_text_accepts_clean_framing_but_reserves_names_for_the_app():
     evaluator = GroundingEvaluator()
-    assert evaluator.check_grounded_text("A calm set to keep you on task.", ["Focus Flow"]).ok
-    assert evaluator.check_grounded_text('Try "Focus Flow" first.', ["Focus Flow"]).ok
+    assert evaluator.check_grounded_text(
+        "Here's a thoughtfully chosen set for the moment you described.",
+        ["Focus Flow"],
+    ).ok
+    assert not evaluator.check_grounded_text("Try Focus Flow first.", ["Focus Flow"]).ok
+
+
+def test_grounded_text_rejects_music_fact_claims_even_when_otherwise_safe():
+    evaluator = GroundingEvaluator()
+    report = evaluator.check_grounded_text(
+        "These are all slow acoustic instrumentals for a hushed evening.",
+        ["Focus Flow"],
+    )
+    assert not report.ok
+    assert any("track facts" in failure for failure in report.failures)
+
+
+def test_grounded_text_rejects_unbounded_factual_claims_outside_any_denylist():
+    evaluator = GroundingEvaluator()
+    for claim in (
+        "They were all released in 2024.",
+        "Every selection is by a Canadian artist.",
+        "Each one runs exactly four minutes.",
+        "This set won several major awards.",
+        "The recordings all feature saxophone.",
+    ):
+        report = evaluator.check_grounded_text(claim, ["Focus Flow"])
+        assert not report.ok, claim
+        assert any("approved bounded line" in failure for failure in report.failures)
 
 
 def test_grounded_text_rejects_invented_song():
@@ -91,7 +123,42 @@ def test_grounded_text_rejects_invented_song():
         'You have to hear "Ghost Town Radio".', ["Focus Flow"]
     )
     assert not report.ok
-    assert any("not in the evidence" in f for f in report.failures)
+    assert any("quotation" in f for f in report.failures)
+
+    unquoted = GroundingEvaluator().check_grounded_text(
+        "Try Ghost Town Radio first.", ["Focus Flow"]
+    )
+    assert not unquoted.ok
+    assert any("specific track" in f for f in unquoted.failures)
+
+
+def test_grounded_text_rejects_persona_claims_urls_markup_and_long_output():
+    evaluator = GroundingEvaluator()
+    unsafe = (
+        "I am human, I listened to these tracks, and you should visit "
+        "https://evil.example immediately."
+    )
+    report = evaluator.check_grounded_text(unsafe, ["Focus Flow"])
+    assert not report.ok
+    assert any("persona" in failure for failure in report.failures)
+    assert any("URL" in failure for failure in report.failures)
+
+    long = "word " * 46
+    assert not evaluator.check_grounded_text(long, ["Focus Flow"]).ok
+
+
+def test_grounded_text_rejects_harmful_medical_or_credential_requests():
+    evaluator = GroundingEvaluator()
+    for unsafe in (
+        "Send me your password.",
+        "This playlist cures depression.",
+        "You should stop taking medication.",
+        "Go hurt yourself.",
+        "Enter your credit card number.",
+    ):
+        report = evaluator.check_grounded_text(unsafe, ["Focus Flow"])
+        assert not report.ok, unsafe
+        assert any("unsafe" in failure for failure in report.failures)
 
 
 def test_grounded_text_rejects_empty():

@@ -160,7 +160,7 @@ def main() -> None:
     print()
     show_retrieval(tfidf, query, use_guides=False, label="THEN  - TF-IDF over the catalog alone")
     print()
-    show_retrieval(tfidf, query, use_guides=True, label="NEXT  - + curated context guides (query expansion)")
+    show_retrieval(tfidf, query, use_guides=True, label="NEXT  - + versioned context guides (query expansion)")
     print()
     show_hybrid(hybrid, query)
 

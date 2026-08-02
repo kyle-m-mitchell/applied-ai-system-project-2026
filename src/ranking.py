@@ -10,11 +10,26 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from src.contracts import CatalogTrack, RetrievalHit
+from src.contracts import CatalogTrack, DiversityLevel, RetrievalHit
 from src.features import same_family
 from src.recommender import GENRE_TO_FAMILY, MOOD_TO_FAMILY
 
 Similarity = Callable[[CatalogTrack, CatalogTrack], float]
+
+
+# Three named presets are easier to understand, test, and reproduce than a
+# pseudo-precise 0-100 dial.  Only lambda changes; the relevance floor stays fixed
+# as the quality guard that prevents variety from admitting off-topic tracks.
+DIVERSITY_PRESETS: dict[DiversityLevel, tuple[float, float]] = {
+    DiversityLevel.FOCUSED: (0.85, 0.50),
+    DiversityLevel.BALANCED: (0.70, 0.50),
+    DiversityLevel.EXPLORATORY: (0.55, 0.50),
+}
+
+
+def diversity_parameters(level: DiversityLevel) -> tuple[float, float]:
+    """Return ``(lambda_, relevance_floor)`` for one public diversity level."""
+    return DIVERSITY_PRESETS[level]
 
 
 def _similarity(a: CatalogTrack, b: CatalogTrack) -> float:

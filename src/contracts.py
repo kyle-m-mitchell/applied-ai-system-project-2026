@@ -31,6 +31,20 @@ class OperatingMode(str, Enum):
     DEGRADED = "degraded"
 
 
+class EmbeddingSource(str, Enum):
+    """Where the query vector came from for this retrieval turn.
+
+    ``OperatingMode.GEMINI`` historically meant that Gemini-built vectors were
+    involved, but it could not distinguish an offline committed query vector
+    from a live network request.  The UI and event receipts need that distinction
+    to make an honest privacy claim.
+    """
+
+    CACHE = "cache"
+    LIVE = "live"
+    LOCAL = "local"  # deterministic fake/test embedder; never a network call
+
+
 class RecommendationRequest(ContractModel):
     """Structured listener preferences accepted by the deterministic scorer.
 
@@ -209,8 +223,8 @@ class RecommendationResult(ContractModel):
 class SourceType(str, Enum):
     """Where a retrieved piece of evidence came from.
 
-    ``CONTEXT_GUIDE`` is defined now so the retrieval interface stays stable, but
-    it is unused until curated context guides are added as a second source.
+    ``CONTEXT_GUIDE`` identifies the versioned Markdown guides used as the
+    implemented second retrieval source. Guides remain evidence, never tracks.
     """
 
     CATALOG = "catalog"
@@ -251,6 +265,8 @@ class RetrievalHit(ContractModel):
     semantic_score: float | None = Field(default=None, ge=0.0, le=1.0)
     lexical_score: float | None = Field(default=None, ge=0.0, le=1.0)
     structured_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    structured_reasons: tuple[str, ...] = ()
+    fusion_version: str | None = Field(default=None, min_length=1)
     track: CatalogTrack
 
 
@@ -288,6 +304,7 @@ class RetrievalResult(ContractModel):
     guides_used: tuple[GuideEvidence, ...] = ()
     expanded_query_terms: tuple[str, ...] = ()
     operating_mode: OperatingMode = OperatingMode.LOCAL
+    embedding_source: EmbeddingSource | None = None
 
 
 class ScoreComponents(ContractModel):
@@ -301,9 +318,10 @@ class ScoreComponents(ContractModel):
 
     Collapsing the two would make "we didn't look" indistinguishable from "we
     looked and it's a miss", silently biasing any fusion that averages them.
-    ``fused`` is the single number the ranking actually ordered by, and
-    ``fusion_version`` names exactly how it was produced, so a score stays
-    reproducible and comparable across runs.
+    ``fused`` is relevance after signal fusion but **before** MMR diversity; MMR
+    may deliberately change the visible order while keeping a relevance floor.
+    ``fusion_version`` names exactly how the relevance was produced, so the
+    signal stays reproducible and comparable across runs.
     """
 
     semantic: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -346,9 +364,10 @@ class GuardCategory(str, Enum):
 class GuardVerdict(ContractModel):
     """The guard's decision about one raw query.
 
-    ``sanitized_query`` is always safe to retrieve on and to log: PII/secret
-    spans are replaced with ``[redacted]`` and injection directives are stripped,
-    so raw sensitive text never reaches retrieval, the provider, or logs.
+    ``sanitized_query`` is safe to continue processing under the category's
+    routing policy: PII/secret spans are replaced with ``[redacted]`` and
+    injection directives are stripped.  It is still user-authored text and must
+    never be persisted in logs or encoded into a shareable URL.
     """
 
     category: GuardCategory
@@ -400,16 +419,31 @@ class FeatureGoal(ContractModel):
 
     @model_validator(mode="after")
     def require_relation_params(self) -> Self:
+        minimum, maximum = (
+            (50.0, 200.0) if self.feature == "tempo_bpm" else (0.0, 1.0)
+        )
         needs_target = {
             FeatureRelation.NEAR, FeatureRelation.AT_LEAST, FeatureRelation.AT_MOST
         }
         if self.relation in needs_target and self.target is None:
             raise ValueError(f"{self.relation.value} requires a target")
+        if self.relation in needs_target and (self.low is not None or self.high is not None):
+            raise ValueError(f"{self.relation.value} accepts target only")
         if self.relation is FeatureRelation.RANGE:
             if self.low is None or self.high is None:
                 raise ValueError("range requires low and high")
+            if self.target is not None:
+                raise ValueError("range accepts low and high only")
             if self.low > self.high:
                 raise ValueError("range low must be <= high")
+        if self.relation in (FeatureRelation.PREFER_HIGH, FeatureRelation.PREFER_LOW):
+            if any(value is not None for value in (self.target, self.low, self.high)):
+                raise ValueError(f"{self.relation.value} accepts no numeric parameters")
+        for label, value in (("target", self.target), ("low", self.low), ("high", self.high)):
+            if value is not None and not minimum <= value <= maximum:
+                raise ValueError(
+                    f"{self.feature} {label} must be between {minimum:g} and {maximum:g}"
+                )
         return self
 
 
@@ -433,6 +467,44 @@ class MusicIntent(ContractModel):
     clarification: str | None = None
     source: str = "rules"
 
+    @model_validator(mode="after")
+    def require_one_goal_per_feature(self) -> Self:
+        """Keep structured scoring from counting one feature more than once.
+
+        A listener may replace an energy preference, but a completed intent may
+        not contain both high- and low-energy goals. Refinement code performs the
+        replacement before constructing this contract.
+        """
+        features = [goal.feature for goal in self.feature_goals]
+        if len(features) != len(set(features)):
+            raise ValueError("feature_goals must contain at most one goal per feature")
+        return self
+
+
+class DiversityLevel(str, Enum):
+    """How tightly MMR should stay near the top relevance ranking.
+
+    This deliberately says *focused/exploratory*, not familiar/adventurous:
+    Cadence has no popularity or listener-history signal yet, but it can honestly
+    control the relevance-versus-variety trade-off.
+    """
+
+    FOCUSED = "focused"
+    BALANCED = "balanced"
+    EXPLORATORY = "exploratory"
+
+
+class ExecutionPolicy(ContractModel):
+    """Per-turn controls that change *how* a request may execute.
+
+    The policy is deliberately separate from musical intent.  ``force_local`` is
+    a privacy rule, while ``diversity`` controls the bounded MMR preset; neither
+    should masquerade as something the listener asked to hear.
+    """
+
+    force_local: bool = False
+    diversity: DiversityLevel = DiversityLevel.BALANCED
+
 
 class CompanionAction(str, Enum):
     """The bounded set of actions the companion may take for one query."""
@@ -448,7 +520,7 @@ class VoiceSource(str, Enum):
     """Which renderer produced the companion's message."""
 
     TEMPLATE = "template"  # deterministic, reproducible, always available
-    GENERATED = "generated"  # produced by a text generator (fake or provider)
+    GENERATED = "generated"  # provider selected approved microcopy; legacy event value
 
 
 class EvaluationReport(ContractModel):
@@ -476,6 +548,7 @@ class AgentTrace(ContractModel):
     action: CompanionAction
     voice_source: VoiceSource = VoiceSource.TEMPLATE
     voice_model: str | None = None
+    network_used: bool = False
     fallback_reason: str | None = None
 
 
@@ -489,6 +562,7 @@ class CompanionResponse(ContractModel):
 
     action: CompanionAction
     message: str
+    intro_message: str | None = None
     retrieval: RetrievalResult | None = None
     intent: MusicIntent | None = None
     trace: AgentTrace | None = None
@@ -499,12 +573,72 @@ class CompanionResponse(ContractModel):
         if self.action in (CompanionAction.RECOMMEND, CompanionAction.DEGRADED):
             if self.retrieval is None or not self.retrieval.hits:
                 raise ValueError(f"{self.action.value} response must include hits")
-        if self.action is CompanionAction.NO_MATCH and self.retrieval is None:
-            raise ValueError("no_match response must include the (empty) retrieval result")
+        if self.action is CompanionAction.NO_MATCH:
+            if self.retrieval is None or self.retrieval.hits:
+                raise ValueError("no_match response must include an empty retrieval result")
         if self.action in (CompanionAction.CLARIFY, CompanionAction.SAFE_RESPONSE):
             if self.retrieval is not None:
                 raise ValueError(f"{self.action.value} response must not include retrieval")
         return self
+
+
+class PipelineReceipt(ContractModel):
+    """Request-local diagnostics returned to a UI without reading shared logs.
+
+    It contains only allowlisted decisions, identifiers, provenance, timings, and
+    fingerprints.  No query or prompt text is permitted in this contract.
+    """
+
+    request_id: str = Field(min_length=1)
+    latency_ms: float = Field(ge=0.0)
+    candidate_ids: tuple[int, ...] = ()
+    final_ids: tuple[int, ...] = ()
+    guard_category: GuardCategory
+    action: CompanionAction
+    force_local: bool
+    diversity: DiversityLevel
+    embedding_source: EmbeddingSource | None = None
+    network_used: bool = False
+    operating_mode: OperatingMode | None = None
+    voice_source: VoiceSource | None = None
+    index_fingerprint: str | None = None
+    config_fingerprint: str | None = None
+
+
+class SignalRow(ContractModel):
+    """One pooled candidate's per-leg ranking signals (catalog data only)."""
+
+    track_id: int = Field(gt=0)
+    title: str = Field(min_length=1, max_length=200)
+    text: float = Field(ge=0.0, le=1.0)
+    structured: float | None = Field(default=None, ge=0.0, le=1.0)
+    fused: float = Field(ge=0.0, le=1.0)
+
+
+class SignalComparison(ContractModel):
+    """Developer-only view of how the candidate pool ranked under each leg —
+    text-only vs structured vs fused — *before* diversity re-ranking.
+
+    It carries catalog titles for display, so it is deliberately kept out of the
+    ``PipelineReceipt`` and the JSONL event log. ``structured_active`` is False
+    when no structured signal ran, in which case ``text`` and ``fused`` agree.
+    """
+
+    structured_active: bool
+    rows: tuple[SignalRow, ...] = ()
+
+
+class CompanionTurn(ContractModel):
+    """A response plus its request-local, privacy-safe pipeline receipt.
+
+    ``comparison`` is an optional developer-only signal breakdown for the
+    candidate pool; it is never logged (it carries catalog titles) and is present
+    only for turns that actually retrieved a pool.
+    """
+
+    response: CompanionResponse
+    receipt: PipelineReceipt
+    comparison: SignalComparison | None = None
 
 
 class CompanionEvent(ContractModel):
@@ -520,7 +654,7 @@ class CompanionEvent(ContractModel):
     correlation id, not an identity. A receipt, not a diary.
     """
 
-    schema_version: str = "1"
+    schema_version: str = "2"
     request_id: str = Field(min_length=1)
     timestamp: str = Field(min_length=1)
     guard_category: GuardCategory
@@ -528,6 +662,10 @@ class CompanionEvent(ContractModel):
     intent_summary: str = ""  # allowlisted facets only (genre/mood/flags), never free text
     operating_mode: OperatingMode | None = None
     voice_source: VoiceSource | None = None
+    embedding_source: EmbeddingSource | None = None
+    network_used: bool = False
+    force_local: bool = False
+    diversity: DiversityLevel = DiversityLevel.BALANCED
     candidate_ids: tuple[int, ...] = ()
     final_ids: tuple[int, ...] = ()
     components: tuple[ScoreComponents, ...] = ()  # parallel to final_ids; reasons stripped

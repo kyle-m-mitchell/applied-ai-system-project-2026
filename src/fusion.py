@@ -27,7 +27,14 @@ from src.structured import structured_relevance
 # so the harness can re-calibrate as cases and data grow.
 W_TEXT = 0.4
 W_STRUCTURED = 0.6
-FUSION_VERSION = "percentile:text=0.4,structured=0.6;v1"
+
+
+def fusion_version(w_text: float, w_structured: float) -> str:
+    """Return the exact, audit-safe identifier for one configured blend."""
+    return f"percentile:text={w_text:g},structured={w_structured:g};v1"
+
+
+FUSION_VERSION = fusion_version(W_TEXT, W_STRUCTURED)
 
 
 def percentile_ranks(scores: Mapping[int, float]) -> dict[int, float]:
@@ -84,6 +91,7 @@ def fuse_pool(
     struct_pct = percentile_ranks(struct_scores)
 
     denom = w_text + w_structured
+    version = fusion_version(w_text, w_structured)
     fused = {
         track_id: (w_text * text_pct[track_id] + w_structured * struct_pct[track_id]) / denom
         for track_id in text_scores
@@ -94,6 +102,8 @@ def fuse_pool(
             update={
                 "score": fused[hit.track.id],
                 "structured_score": structured[hit.track.id][0],
+                "structured_reasons": structured[hit.track.id][1],
+                "fusion_version": version,
             }
         )
         for hit in reordered

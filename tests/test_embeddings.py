@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from src.contracts import CatalogTrack, OperatingMode
+from src.contracts import CatalogTrack, EmbeddingSource, OperatingMode
 from src.embeddings import (
     EMBEDDING_MODEL,
     EXAMPLE_QUERIES,
@@ -30,6 +30,7 @@ from src.recommender import load_songs
 from src.retrieval import (
     EmbeddingRetriever,
     HybridRetriever,
+    build_default_retriever,
     build_document_text,
     embedding_content_hash,
     load_context_guides,
@@ -99,6 +100,7 @@ def test_embedding_retriever_ranks_nearest_vector_first(catalog, embedder, cache
     result = retriever.search(build_document_text(target), k=3)
 
     assert result.operating_mode is OperatingMode.GEMINI
+    assert result.embedding_source is EmbeddingSource.LOCAL
     assert result.hits[0].track.id == target.id
     assert result.hits[0].score == pytest.approx(1.0, abs=1e-6)
     assert result.hits[0].semantic_score is not None
@@ -133,6 +135,38 @@ def test_missing_cache_degrades(catalog, embedder):
     assert retriever.search("study", k=1).operating_mode is OperatingMode.DEGRADED
 
 
+def test_partial_catalog_cache_is_never_treated_as_a_semantic_index(
+    catalog, embedder, cache
+):
+    one_id = catalog[0].id
+    partial = EmbeddingCache(
+        cache.embedding_model,
+        cache.dimension,
+        cache.content_hash,
+        {one_id: cache.vectors[one_id]},
+    )
+    retriever = EmbeddingRetriever(catalog, embedder, partial)
+    assert not retriever.usable
+    result = retriever.search("study", k=3)
+    assert result.operating_mode is OperatingMode.DEGRADED
+
+
+def test_query_vector_with_wrong_runtime_dimension_degrades_instead_of_crashing(
+    catalog, cache
+):
+    class LyingEmbedder(FakeEmbedder):
+        def embed_query(self, text):
+            return FakeEmbedder(dimension=32).embed_query(text)
+
+    retriever = HybridRetriever(
+        catalog,
+        LyingEmbedder(dimension=cache.dimension, model_id=cache.embedding_model),
+        cache,
+    )
+    result = retriever.search("study", k=3)
+    assert result.operating_mode is OperatingMode.DEGRADED
+
+
 def test_embedder_error_degrades(catalog, cache):
     class Boom(FakeEmbedder):
         def embed_query(self, text):
@@ -142,6 +176,23 @@ def test_embedder_error_degrades(catalog, cache):
     result = retriever.search("study", k=3)
     assert result.operating_mode is OperatingMode.DEGRADED
     assert result.hits
+
+
+def test_failed_live_attempt_preserves_network_provenance(catalog, cache, guides):
+    class LiveBoom(FakeEmbedder):
+        def query_source(self, text):
+            return EmbeddingSource.LIVE
+
+        def embed_query(self, text):
+            raise RuntimeError("provider reached, then failed")
+
+    embedder = LiveBoom(dimension=64)
+    semantic = EmbeddingRetriever(catalog, embedder, cache)
+    hybrid = HybridRetriever(catalog, embedder, cache, guides)
+
+    for result in (semantic.search("study"), hybrid.search("study")):
+        assert result.operating_mode is OperatingMode.DEGRADED
+        assert result.embedding_source is EmbeddingSource.LIVE
 
 
 def test_hybrid_blends_semantic_and_lexical_exactly(catalog, embedder, cache, guides):
@@ -156,6 +207,7 @@ def test_hybrid_blends_semantic_and_lexical_exactly(catalog, embedder, cache, gu
         assert hit.score == pytest.approx(
             0.7 * hit.semantic_score + 0.3 * hit.lexical_score, abs=1e-9
         )
+        assert hit.fusion_version == "weighted-sum:sem=0.7,lex=0.3;v1"
 
 
 def test_hybrid_degrades_when_embeddings_unavailable(catalog, embedder, guides):
@@ -164,6 +216,23 @@ def test_hybrid_degrades_when_embeddings_unavailable(catalog, embedder, guides):
 
     assert result.operating_mode is OperatingMode.DEGRADED
     assert result.hits  # TF-IDF + guide expansion still rescue the bridge query
+
+
+def test_provider_free_cache_miss_is_expected_local_operation(
+    catalog, embedder, cache, guides
+):
+    retriever = HybridRetriever(
+        catalog,
+        CachedQueryEmbedder(
+            QueryCache(embedder.model_id, embedder.dimension, {})
+        ),
+        cache,
+        guides,
+        fallback_mode=OperatingMode.LOCAL,
+    )
+    result = retriever.search("uncached study query", k=3)
+    assert result.operating_mode is OperatingMode.LOCAL
+    assert result.embedding_source is EmbeddingSource.LOCAL
 
 
 def test_embedding_content_hash_is_sensitive(catalog):
@@ -200,9 +269,35 @@ def test_query_cache_serves_cached_queries_and_falls_back(tmp_path, embedder):
     restored = load_query_cache(path)
 
     cached_only = CachedQueryEmbedder(restored)
+    assert cached_only.query_source(EXAMPLE_QUERIES[0]) is EmbeddingSource.CACHE
     assert cached_only.embed_query(EXAMPLE_QUERIES[0]) == query_cache.vectors[EXAMPLE_QUERIES[0]]
     with pytest.raises(RuntimeError):
         cached_only.embed_query("an uncached novel query")
 
     with_fallback = CachedQueryEmbedder(restored, fallback=embedder)
+    assert with_fallback.query_source("novel") is EmbeddingSource.LOCAL
     assert len(with_fallback.embed_query("novel")) == embedder.dimension
+
+
+def test_factory_rejects_same_model_caches_with_mismatched_dimensions(
+    tmp_path, catalog, embedder, cache
+):
+    catalog_path = tmp_path / "catalog.json"
+    query_path = tmp_path / "queries.json"
+    save_embedding_cache(catalog_path, cache)
+    wrong = FakeEmbedder(dimension=32, model_id=cache.embedding_model)
+    save_query_cache(
+        query_path,
+        QueryCache(
+            cache.embedding_model,
+            wrong.dimension,
+            {"music to concentrate": wrong.embed_query("music to concentrate")},
+        ),
+    )
+    retriever = build_default_retriever(
+        catalog,
+        catalog_cache_path=str(catalog_path),
+        query_cache_path=str(query_path),
+    )
+    result = retriever.search("music to concentrate", k=3)
+    assert result.operating_mode is OperatingMode.LOCAL

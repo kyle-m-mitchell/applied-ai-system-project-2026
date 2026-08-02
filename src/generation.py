@@ -20,9 +20,10 @@ from collections.abc import Sequence
 from src.embeddings import _make_ssl_context
 
 
-# The handbook researched "gemini-3.5-flash-lite", which the live model list does
-# not expose; the current flash-lite line is 3.1 / -latest. The alias is robust to
-# version rolls; any failure falls back to the deterministic voice.
+# The current stable Flash-Lite line is Gemini 3.5. Cadence intentionally uses
+# Google's rolling ``-latest`` alias for this optional presentation layer; a
+# commercial release should pin and re-evaluate a stable ID. Any provider/model
+# drift still falls back to the deterministic voice.
 TEXT_MODEL = "gemini-flash-lite-latest"
 
 # One user/model exchange used as a few-shot example.
@@ -33,6 +34,7 @@ class TextGenerator(ABC):
     """Provider-agnostic short-text generator."""
 
     model_id: str
+    is_remote: bool = False
 
     @abstractmethod
     def generate(self, system: str, few_shot: FewShot, user: str) -> str:
@@ -49,7 +51,7 @@ class FakeTextGenerator(TextGenerator):
     model_id = "fake-generator-v1"
 
     def generate(self, system: str, few_shot: FewShot, user: str) -> str:
-        return "Here's a little set that should fit the mood."
+        return "Here's a thoughtfully chosen set for the moment you described."
 
 
 class GeminiTextGenerator(TextGenerator):
@@ -62,6 +64,7 @@ class GeminiTextGenerator(TextGenerator):
     """
 
     BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+    is_remote = True
 
     def __init__(
         self,

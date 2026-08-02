@@ -27,6 +27,7 @@ from src.contracts import (  # noqa: E402
     CompanionResponse,
     RecommendationRequest,
     RecommendationResult,
+    ExecutionPolicy,
 )
 from src.factory import CompanionConfig, CompanionDeps, build_companion  # noqa: E402
 from src.recommender import load_songs  # noqa: E402
@@ -39,6 +40,16 @@ CATALOG_CACHE = REPO_ROOT / "data" / "embeddings" / "catalog.json"
 QUERY_CACHE = REPO_ROOT / "data" / "embeddings" / "queries.json"
 EVENT_LOG = REPO_ROOT / "logs" / "events.jsonl"
 DIVIDER = "-" * 64
+
+
+def _provider_disabled() -> bool:
+    """Honor the documented operator kill switch before constructing clients."""
+    return os.environ.get("CADENCE_DISABLE_PROVIDER", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def format_request(request: RecommendationRequest) -> str:
@@ -82,7 +93,7 @@ def _load_dotenv() -> None:
 
 def _live_embedder():
     """A live Gemini embedder if a key is present, else None."""
-    if not os.environ.get("GEMINI_API_KEY"):
+    if _provider_disabled() or not os.environ.get("GEMINI_API_KEY"):
         return None
     try:
         from src.embeddings import GeminiEmbedder
@@ -94,7 +105,7 @@ def _live_embedder():
 
 def _text_generator():
     """A live Gemini text generator for Cadence's voice if a key is present."""
-    if not os.environ.get("GEMINI_API_KEY"):
+    if _provider_disabled() or not os.environ.get("GEMINI_API_KEY"):
         return None
     try:
         from src.generation import GeminiTextGenerator
@@ -104,7 +115,9 @@ def _text_generator():
         return None
 
 
-def _build_companion(*, log_events: bool = False) -> MusicCompanion:
+def _build_companion(
+    *, log_events: bool = False, provider_enabled: bool = True
+) -> MusicCompanion:
     """Build the CLI's companion through the shared factory — one construction path.
 
     Live provider objects are supplied as deps (``None`` without a key); the
@@ -112,16 +125,19 @@ def _build_companion(*, log_events: bool = False) -> MusicCompanion:
     receipt records always reflects what actually ran.
     """
     _load_dotenv()
+    allow_provider = provider_enabled and not _provider_disabled()
+    embedder = _live_embedder() if allow_provider else None
+    generator = _text_generator() if allow_provider else None
     config = CompanionConfig(
         catalog_path=str(CATALOG_PATH),
         guides_dir=str(GUIDES_DIR),
         catalog_cache_path=str(CATALOG_CACHE),
         query_cache_path=str(QUERY_CACHE),
-        use_live_embedder=True,
-        use_generator=True,
+        use_live_embedder=embedder is not None,
+        use_generator=generator is not None,
         event_log_path=str(EVENT_LOG) if log_events else None,
     )
-    deps = CompanionDeps(live_embedder=_live_embedder(), generator=_text_generator())
+    deps = CompanionDeps(live_embedder=embedder, generator=generator)
     return build_companion(config, deps)
 
 
@@ -175,14 +191,20 @@ def run_structured_demo() -> None:
 
 
 def main() -> None:
-    flags = {"--trace", "--log"}
+    flags = {"--trace", "--log", "--local-only"}
     args = [arg for arg in sys.argv[1:] if arg not in flags]
     show_trace = "--trace" in sys.argv[1:]
     log_events = "--log" in sys.argv[1:]  # opt-in privacy-safe receipt (see logs/events.jsonl)
+    local_only = "--local-only" in sys.argv[1:]
     if args:
         query = " ".join(args)
-        companion = _build_companion(log_events=log_events)
-        print_companion_response(companion.respond(query), show_trace=show_trace)
+        companion = _build_companion(
+            log_events=log_events, provider_enabled=not local_only
+        )
+        print_companion_response(
+            companion.respond(query, policy=ExecutionPolicy(force_local=local_only)),
+            show_trace=show_trace,
+        )
     else:
         run_structured_demo()
 

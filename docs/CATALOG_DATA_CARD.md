@@ -188,7 +188,7 @@ voice tests; the evaluation harness and the scoring + observability foundation
 added the rest — all offline):
 
 ```text
-157 passed
+224 passed
 ```
 
 ## Human review protocol

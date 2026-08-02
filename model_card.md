@@ -1,15 +1,21 @@
-# 🎧 Model Card: Music Recommender Simulation
+# 🎧 Model Card: Cadence Applied-AI Music Companion
 
 ## 1. Model Name  
 
-**TasteTether 1.0** — the deterministic content-based baseline for the planned
-**Cadence** applied-AI music companion.
+**TasteTether 1.0** is the deterministic content-based baseline. **Cadence** is
+the implemented applied-AI system built around it: guarded natural language,
+multi-source retrieval, structured-preference fusion, bounded agent actions,
+grounded voice, evaluation, and a Streamlit listening room.
 
 ---
 
 ## 2. Intended Use  
 
-My recommender is designed to gather the music "taste" of a user and suggest songs based off of their preferences. The system assumes the user would prefer listening to their favorite genre, at that moment, by default and returns a list of songs, fine-tuned to their preferences. This is purely for classroom exploration.
+The original recommender gathers a structured music taste profile and suggests
+songs that match it. Cadence adds a guarded natural-language and Streamlit path
+for describing a moment, inspecting why tracks were selected, and reversibly
+refining the result. It is an educational and portfolio system over a fictional
+catalog, not a production streaming service or a source of licensed playback.
 
 ---
 
@@ -43,6 +49,13 @@ target_tempo (in BPM). Genre and mood are matched case-insensitively.
 
 Every preference has exactly one song attribute it's compared against.
 
+Cadence's applied-AI path wraps that trusted foundation rather than replacing
+it. A bounded request flows through input/privacy guard → typed intent → catalog
+and context-guide retrieval → optional semantic embeddings → structured/text
+fusion → relevance-safe MMR diversity → grounding evaluation → deterministic or
+guarded selection from approved Cadence microcopy. The Streamlit interface submits to this same
+`MusicCompanion` service; it does not implement a second ranking algorithm.
+
 ---
 
 ## 4. Data  
@@ -55,9 +68,10 @@ snapshot. House, soul, and punk were added to the original 17 genres.
 Each record contains the original title, artist, genre, mood, and five numeric
 audio-style fields (energy, tempo, valence, danceability, acousticness). Feature
 2 adds a natural-language description, tags, listening contexts, instruments,
-instrumental and explicit flags, and a decade-style era label. These new fields
-are validated and intended to ground the future RAG retriever; the current
-deterministic score still uses only the original scoring fields.
+instrumental and explicit flags, and a decade-style era label. These fields are
+validated and now ground Cadence's TF-IDF, context-guide, and semantic retrieval
+paths; the original deterministic score still uses only the original scoring
+fields.
 
 The catalog is synthetic and reproducibly generated from curated genre
 profiles. Its values are authored rather than measured from audio, so they are
@@ -92,6 +106,13 @@ person can read top to bottom and adjust by hand. It runs instantly on the
 catalog with no user history, no training step, and no outside services, which
 makes it easy to reason about and easy to test.
 
+**The applied system remains inspectable and useful offline.** Cadence exposes
+interpreted intent, retrieval provenance, component scores, hard constraints,
+and operating mode in the same Streamlit workflow that produces the result. A
+backend execution policy blocks provider calls in local-only mode, sensitive
+routing stays provider-free through later refinements, and cached/local fallback
+paths preserve useful recommendations when cloud assistance is absent.
+
 ---
 
 ## 6. Limitations and Bias
@@ -119,23 +140,22 @@ confidence.
 
 The experiments below were recorded against the original 20-track baseline and
 are preserved because they motivated later changes. They are not current
-200-track acceptance results. The current automated catalog/service/retrieval
-result is `115 passed` (Features 3/3b/4 + Features 5–6 added retrieval,
-context-guide, embedding/hybrid, guard/intent/companion, and MMR/evaluator/voice
-tests, all offline); a dedicated AI/RAG evaluation harness with quality metrics
-is the next feature.
+200-track acceptance results. The current system has **216 passing offline
+tests**, including service, retrieval, structured fusion, guardrails, fallback,
+bounded-agent, voice, evaluation-harness, refinement, and Streamlit AppTest
+coverage. The committed evaluation report card passes its gate with **100% hard-
+constraint adherence** and **0.863 average genre satisfaction**.
 
-**Specialized behavior — Cadence's voice.** The companion can present results in
-the voice of *Cadence*, a warm fictional DJ (voice card + few-shot in
-`docs/CADENCE_VOICE.md`). Cadence only *frames* the set; the track identities
-always come from the validated evidence, the framing is grounding-checked
-(anything quoting a non-retrieved song is discarded), and the deterministic
-template voice is the always-available baseline and fallback. Cadence never claims
-to have heard a track, to have feelings, or to be human.
+**Specialized behavior — Cadence's voice.** The optional model is a bounded tone
+selector, not a factual narrator. Given the guarded request, it must copy exactly
+one application-owned, fact-free line from `APPROVED_FRAMINGS`; the application
+renders all track facts. Exact-membership and safety checks reject any new prose,
+name, description, link, markup, persona claim, or unsafe language, then use the
+deterministic baseline. This is constrained prompting, not fine-tuning.
 
-| Baseline (template) | Cadence (grounded Gemini) |
+| Baseline (template) | Cadence (model-selected approved line) |
 |---|---|
-| `Here are a few picks (instrumental, clean) for that:` | `Here is a wordless mix of clean, steady instrumental textures designed to keep your mind anchored through a long study session.` |
+| `Here are a few picks (instrumental, clean) for that:` | `Here's a thoughtfully chosen set for the moment you described.` |
 
 Both are followed by the identical, validated track list.
 
@@ -144,8 +164,22 @@ deterministic guard before anything else: it redacts emails, phone numbers, and
 key-like secrets (which are never sent to the provider or logged), strips
 prompt-injection directives, and routes clear crisis language to a brief,
 non-clinical safe response that points to real help. Sensitive queries are
-answered by the local retriever only. The guard is a coarse regex net, not a
-perfect classifier, so it deliberately errs toward redacting or staying local.
+answered through a provider-free retriever and deterministic voice, and that
+restriction remains sticky through refinements. The UI also exposes a local-only
+control backed by `ExecutionPolicy`, not merely a display badge. The guard is a
+coarse regex net, not a perfect classifier, so it deliberately errs toward
+redacting or staying local.
+
+**Phase 4 product evaluation.** The Streamlit UI calls the same
+`MusicCompanion` as the CLI and evaluator. Its Taste Console submits one typed
+transaction only when the listener presses **Remix**, while quick actions and
+guarded follow-ups re-enter the same retrieve → fuse → diversify → evaluate
+→ voice pipeline. Immutable session snapshots support exact undo; clarify,
+no-match, and safe-response outcomes do not destroy the last working set. A
+request-local `PipelineReceipt` distinguishes cached, live, and local embedding
+sources and records network use without storing prompt text. Automated AppTest
+coverage verifies normal, privacy, fallback, refinement, undo, and developer
+flows. Connected-browser desktop/mobile/accessibility review remains pending.
 
 ### Everyday profiles I tested
 
@@ -312,36 +346,35 @@ profiles:
 
 ## 8. Future Work  
 
-My testing (Sections 6 and 7) pointed to four concrete next steps:
+The implemented system now has explicit no-match behavior, directional
+preferences, relevance-safe MMR diversity, an evaluation harness, and a working
+UI. The next honest improvements are:
 
-- **Add a "no confident matches" signal.** Empty requests are now rejected, but
-  an unknown all-miss preference can still return zero-score ID order. The
-  recommender should notice when nothing clears a minimum bar and say so, instead
-  of presenting filler as picks.
-- **Inject genre diversity into the top-k.** To soften the filter-bubble /
-  family-size lottery from Section 6, the ranker could reserve a slot or two for
-  strong matches outside the user's family, trading a little genre purity for
-  real discovery.
-- **Use and evaluate the new retrieval-ready catalog.** The catalog-growth step
-  is complete at 200 tracks/20 genres. Feature 3 added a provenance-aware local
-  TF-IDF retriever (`src/retrieval.py`) over the catalog, and Feature 3b added a
-  second source — curated context guides (`data/context_guides/`) that expand a
-  query toward catalog vocabulary and ride along as cited evidence — making this
-  multi-source RAG, with a before/after demo. Feature 4 then added Gemini
-  embeddings and semantic+lexical hybrid ranking behind the same `Retriever`
-  interface — reproducible via a committed vector cache, a deterministic fake for
-  tests, and an honest TF-IDF fallback, with the API key kept in a git-ignored
-  `.env`. Still ahead: session feedback as a third source and quantitative
-  retrieval measurements in an evaluation harness.
+- **Replace synthetic breadth with provenance-first real data.** Add a
+  licensed/CC-compatible catalog adapter with field-level provenance, explicit
+  unit conversion, missing-value handling, and quarantine instead of fabricating
+  absent audio properties.
+- **Evaluate session personalization before using ratings.** The current UI
+  records a session-only fit rating but does not let it alter recommendations.
+  Any feedback signal should be modest, inspectable, resettable, and measured
+  against relevance and filter-bubble regressions before release.
+- **Expand language understanding without weakening the boundary.** The current
+  deterministic parser supports a controlled vocabulary. A provider-backed
+  structured parser could cover more phrasing only if it returns the same strict
+  contracts, passes the guard, and retains the deterministic fallback.
+- **Complete launch and human-review work.** Perform connected-browser desktop,
+  narrow-screen, keyboard, screen-reader, reduced-motion, and contrast checks;
+  deploy a provider-disabled staging build; then add rate limiting,
+  authentication where needed, retention/deletion policy, abuse monitoring, and
+  human review of catalog/context-guide language. A true ablation view also
+  requires preserving the original pre-fusion pool rather than reconstructing it
+  from final cards.
 
-  **Cloud-AI use disclosure.** The embedding path sends catalog and query text to
-  Google's Gemini API; under the current free-tier terms that content may be used
-  to improve products and reviewed by humans, so no secrets or personal data are
-  embedded, and the app runs fully locally without a key.
-- **Support smarter, more expressive preferences.** Allow directional targets
-  ("at least this energetic" rather than "near this"), and learn the genre/mood
-  families from the data instead of hand-drawing them, so the groupings aren't
-  just the designer's judgment calls.
+**Cloud-AI use disclosure.** When local-only is off, an uncached ordinary query
+may be sent to Google's Gemini API for embedding and grounded framing. Sensitive
+input is routed provider-free. Under the provider's applicable terms, submitted
+content may be retained or reviewed, so users should not submit secrets; Cadence
+remains fully usable without a key.
 
 ---
 
@@ -358,3 +391,11 @@ trade-offs feel real in a way I didn't expect going in. It has changed how I loo
 at the apps I use every day: behind a tidy list of "recommended for you" sit
 dozens of quiet judgment calls, and the ones that create bias are usually not the
 ones that looked risky up front.
+
+Building the Phase 4 UI added a second lesson: interface wording is part of
+system reliability. Calling a cached vector a live request, labeling fused
+relevance as the final MMR order, or letting a visual local-only toggle bypass the
+backend would make an otherwise correct system misleading. Treating every
+control as a typed transaction, preserving provenance in request-local receipts,
+and testing the UI against the public service made the product easier to explain
+because its claims now correspond to executable behavior.

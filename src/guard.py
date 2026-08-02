@@ -84,7 +84,7 @@ class InputGuard:
         self._max_chars = max_chars
 
     def inspect(self, text: str) -> GuardVerdict:
-        """Return a verdict whose ``sanitized_query`` is safe to retrieve and log."""
+        """Return text safe for routed processing—not for persistence or URLs."""
         if not text or not text.strip():
             return GuardVerdict(category=GuardCategory.EMPTY, reason="empty query")
         if len(text) > self._max_chars:

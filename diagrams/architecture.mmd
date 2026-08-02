@@ -1,66 +1,91 @@
-%% AI Music Companion — IMPLEMENTED architecture (what exists and is tested today).
-%% For the intended end state (planned UI, session memory, structured ranking),
-%% see diagrams/roadmap.mmd. Solid arrows = runtime/indexing data flow;
-%% dotted arrows = dependency, testing, or provider capability.
+%% Cadence — IMPLEMENTED and tested architecture as of Phase 4.
+%% Solid arrows are runtime/indexing flow. Dotted arrows are testing,
+%% observability, provider capability, or human-review relationships.
 
 flowchart TB
-    subgraph RUNTIME["Runtime request and response (CLI)"]
+    subgraph EXPERIENCE["Listener experience — Streamlit or CLI"]
         direction LR
         LISTENER(["Listener"])
-        APP["CLI<br/>RecommendationService + MusicCompanion"]
-        INPUT_GUARD["Input + privacy guard<br/>size · PII/secret redaction · injection · crisis safe-response"]
-        AGENT["MusicCompanion — bounded agent<br/>rule intent parser + allowlisted actions + privacy-safe trace"]
-        RETRIEVER["Retriever interface<br/>TF-IDF · context guides · Gemini embeddings · hybrid + provenance"]
-        RANKER["Hard filters + semantic/lexical + structured-preference fusion (percentile) + MMR (mood- or genre-diverse)"]
-        EVALUATOR["Grounding evaluator<br/>result: ids · duplicates · constraints · evidence · count<br/>generated framing: quoted-title check (narrow, defense-in-depth)"]
-        POLICY["Situation policy<br/>recommend · clarify · no-match · safe-response · degraded"]
-        VOICE["Cadence voice<br/>deterministic baseline + optional grounded Gemini framing"]
-        OUTPUT_GUARD["Output check (contracts + grounding)<br/>schema · action/hit invariants · framing grounding"]
-        RESULT(["Recommendations<br/>songs · reasons · evidence · operating mode"])
-        SAFE(["Fixed safe response<br/>crisis · blocked input"])
-        FALLBACK["Local degraded mode<br/>TF-IDF retrieval + deterministic voice (no provider)"]
+        UI["Streamlit listening room<br/>search · intent/evidence cards · Taste Console<br/>follow-up · evolution · undo · developer view"]
+        CLI["CLI<br/>structured scorer or natural-language companion"]
+        SESSION[("Per-browser session state<br/>guarded intent · immutable snapshots<br/>controlled deltas · session-only rating")]
+        POLICY["Typed execution policy<br/>force_local · Focused/Balanced/Exploratory"]
+        RESULT(["Grounded set or bounded state<br/>recommend · clarify · no-match<br/>safe-response · degraded"])
 
-        LISTENER --> APP
-        APP --> INPUT_GUARD
-        INPUT_GUARD -->|"valid or sanitized (sensitive stays local)"| AGENT
-        INPUT_GUARD -->|"crisis / blocked"| SAFE
+        LISTENER --> UI
+        LISTENER --> CLI
+        UI --> POLICY
+        UI <--> SESSION
+        UI --> RESULT
+        CLI --> RESULT
+    end
+
+    subgraph PIPELINE["One shared MusicCompanion pipeline"]
+        direction LR
+        GUARD["Input + privacy guard<br/>size · PII/secret redaction<br/>injection stripping · crisis route"]
+        AGENT["Bounded agent<br/>allowlisted actions · sticky guard category<br/>rule intent parser / validated IntentPatch"]
+        RETRIEVER["Retriever interface<br/>local TF-IDF + guides<br/>cached/live Gemini embeddings<br/>semantic + lexical hybrid"]
+        FUSION["Ranking<br/>hard filters → structured/text fusion<br/>→ MMR with fixed relevance floor"]
+        RESULT_EVAL["Result evaluator<br/>valid IDs · unique · constraints<br/>evidence · requested count"]
+        VOICE["Cadence voice<br/>deterministic baseline<br/>optional Gemini microcopy selection"]
+        FRAMING_GUARD["Framing output guard<br/>exact application-owned allowlist<br/>format + safety checks → template fallback"]
+        CONTRACTS["Output contracts<br/>CompanionResponse + AgentTrace<br/>request-local PipelineReceipt"]
+        SAFE["Fixed safe response<br/>no retrieval or provider call"]
+        FALLBACK["Provider-free / fallback path<br/>TF-IDF + deterministic voice<br/>labeled local or degraded"]
+
+        GUARD -->|"ordinary / sanitized"| AGENT
+        GUARD -->|"high risk"| SAFE
         AGENT --> RETRIEVER
-        RETRIEVER --> RANKER
-        RANKER --> EVALUATOR
-        EVALUATOR --> POLICY
-        POLICY -->|"recommend"| VOICE
-        POLICY -->|"no-match / clarify"| RESULT
-        VOICE --> OUTPUT_GUARD
-        OUTPUT_GUARD --> RESULT
-        SAFE --> RESULT
-        GEMINI -. "unavailable → local" .-> FALLBACK
-        FALLBACK -. "degraded (TF-IDF)" .-> RETRIEVER
+        RETRIEVER --> FUSION
+        FUSION --> RESULT_EVAL
+        RESULT_EVAL -->|"grounded set"| VOICE
+        RESULT_EVAL -->|"empty / rejected"| CONTRACTS
+        VOICE --> FRAMING_GUARD
+        FRAMING_GUARD --> CONTRACTS
+        SAFE --> CONTRACTS
+        FALLBACK --> RETRIEVER
     end
 
-    subgraph GROUNDING["Grounding and provider"]
-        direction LR
-        CURATOR(["Human curator"])
-        SOURCES[("Validated 200-song catalog<br/>+ curated context guides (query expansion)")]
-        INDEX["Retrieval index<br/>TF-IDF (2 sources) + Gemini embeddings, committed cache<br/>semantic+lexical hybrid"]
-        GEMINI["Gemini provider adapter (stdlib REST, optional)<br/>embeddings + Cadence framing<br/>one retry, then local fallback"]
+    POLICY --> AGENT
+    CLI --> GUARD
+    UI -->|"submitted transaction only"| GUARD
+    CONTRACTS --> UI
+    CONTRACTS --> CLI
 
-        CURATOR --> SOURCES
-        SOURCES --> INDEX
+    subgraph EVIDENCE["Grounding data and optional provider"]
+        direction LR
+        CURATOR(["Human catalog/guide review<br/>(pending before launch)"])
+        CATALOG[("Validated generated fictional catalog<br/>200 tracks · typed audio metadata")]
+        GUIDES[("AI-drafted context guides<br/>query expansion + cited evidence")]
+        INDEX["Immutable in-memory indexes<br/>TF-IDF + committed embedding cache<br/>content/config fingerprints"]
+        GEMINI["Optional Gemini adapters<br/>query embedding + approved-line selection<br/>bounded failure → local fallback"]
+
+        CURATOR -. "review gate not yet completed" .-> CATALOG
+        CURATOR -. "review gate not yet completed" .-> GUIDES
+        CATALOG --> INDEX
+        GUIDES --> INDEX
         INDEX --> RETRIEVER
-        GEMINI -. "AI capability" .-> APP
+        GEMINI -. "live capability only when policy permits" .-> RETRIEVER
+        GEMINI -. "bounded selection only when policy permits" .-> VOICE
+        GEMINI -. "missing / blocked / failed" .-> FALLBACK
     end
 
-    subgraph RELIABILITY["Reliability, measurement, and human review"]
+    subgraph RELIABILITY["Reliability, evaluation, and human checking"]
         direction LR
-        TESTER(["Human tester"])
-        TESTS["pytest — 157 offline tests<br/>unit + integration, normal · edge · adversarial · outage"]
-        EVAL["Evaluation report card<br/>labeled cases · scenario matrix · pass/fail gate<br/>results never store query text"]
-        EVENTS[("Privacy-safe event receipt (opt-in JSONL)<br/>decisions · ids · scores · fingerprints<br/>never query text / prompts / persistent ids")]
+        TESTER(["Human tester / reviewer"])
+        TESTS["pytest — offline suite<br/>unit · integration · AppTest<br/>normal · edge · privacy · adversarial · outage"]
+        EVAL["Evaluation report card<br/>scenario matrix · pass/fail gate<br/>hard constraints 100% · genre satisfaction 0.863"]
+        EVENTS[("Optional privacy-safe JSONL events<br/>controlled facets · IDs · scores · modes<br/>never prompt text or persistent listener ID")]
+        DEV["UI developer receipt<br/>request-local IDs · latency · source<br/>network use · guard · fingerprints"]
 
         TESTER --> TESTS
-        TESTS -. "exercises the same service" .-> APP
-        EVAL -. "runs the same public path" .-> APP
-        APP -. "one receipt per turn" .-> EVENTS
+        TESTER --> EVAL
+        TESTS -. "same public services" .-> UI
+        TESTS -. "same public services" .-> CLI
+        EVAL -. "same MusicCompanion path" .-> AGENT
+        CONTRACTS -. "best-effort opt-in event" .-> EVENTS
+        CONTRACTS -. "current turn only" .-> DEV
+        DEV -. "human inspects AI result" .-> TESTER
     end
 
     classDef human fill:#FFF2CC,stroke:#8A6D1D,stroke-width:2px,color:#2D2408;
@@ -71,10 +96,10 @@ flowchart TB
     classDef guard fill:#FFE0E0,stroke:#A33A3A,stroke-width:1.5px,color:#461919;
     classDef test fill:#E0F4F7,stroke:#337783,stroke-width:1.5px,color:#14373D;
 
-    class LISTENER,RESULT,CURATOR,TESTER human;
-    class APP interface;
+    class LISTENER,CURATOR,TESTER human;
+    class UI,CLI,POLICY,CONTRACTS,DEV,RESULT interface;
     class AGENT,RETRIEVER,VOICE,GEMINI ai;
-    class RANKER,POLICY,FALLBACK,INDEX deterministic;
-    class SOURCES,EVENTS data;
-    class INPUT_GUARD,EVALUATOR,SAFE,OUTPUT_GUARD guard;
+    class FUSION,INDEX,SESSION,FALLBACK deterministic;
+    class CATALOG,GUIDES,EVENTS data;
+    class GUARD,RESULT_EVAL,FRAMING_GUARD,SAFE guard;
     class TESTS,EVAL test;

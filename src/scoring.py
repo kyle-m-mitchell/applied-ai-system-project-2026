@@ -13,10 +13,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from src.contracts import RankedCandidate, RetrievalHit, ScoreComponents
+from src.fusion import FUSION_VERSION
 
 # Fusion identifiers name exactly how ``fused`` was produced, so a score stays
 # reproducible and comparable. They mirror the retrievers' behavior.
-FUSION_STRUCTURED = "percentile:text+structured;v1"
+FUSION_STRUCTURED = FUSION_VERSION
 FUSION_HYBRID = "weighted-sum:sem=0.6,lex=0.4;v1"
 FUSION_LEXICAL = "lexical-only;v1"
 FUSION_SEMANTIC = "semantic-only;v1"
@@ -27,6 +28,8 @@ MAX_REASON_TERMS = 5
 
 def _fusion_version(hit: RetrievalHit) -> str:
     """Name the fusion that produced this hit's score, inferred from its signals."""
+    if hit.fusion_version is not None:
+        return hit.fusion_version
     if hit.structured_score is not None:
         return FUSION_STRUCTURED  # text + structured were rank-fused
     has_semantic = hit.semantic_score is not None
@@ -63,7 +66,10 @@ def candidate_from_hit(hit: RetrievalHit) -> RankedCandidate:
         fused=hit.score,
         available_signals=available,
         fusion_version=_fusion_version(hit),
-        reasons=tuple(f"matched: {term}" for term in hit.matched_terms[:MAX_REASON_TERMS]),
+        reasons=(
+            tuple(f"matched: {term}" for term in hit.matched_terms[:MAX_REASON_TERMS])
+            + tuple(f"structured: {reason}" for reason in hit.structured_reasons)
+        ),
     )
     return RankedCandidate(
         track=hit.track,

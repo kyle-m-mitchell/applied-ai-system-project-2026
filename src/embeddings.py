@@ -33,6 +33,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from src.contracts import EmbeddingSource
+
 
 EMBEDDING_MODEL = "gemini-embedding-2"
 EMBEDDING_DIM = 768
@@ -119,6 +121,15 @@ class Embedder(ABC):
     @abstractmethod
     def embed_query(self, text: str) -> Vector:
         """Embed one listener query (retrieval side)."""
+
+    def query_source(self, text: str) -> EmbeddingSource:
+        """Describe where ``embed_query`` will obtain this query's vector.
+
+        Provider adapters override this explicitly.  The conservative default is
+        local so an unknown/custom test embedder can never make the product claim
+        that a network request occurred.
+        """
+        return EmbeddingSource.LOCAL
 
 
 class FakeEmbedder(Embedder):
@@ -228,6 +239,9 @@ class GeminiEmbedder(Embedder):
 
     def embed_query(self, text: str) -> Vector:
         return self._embed_one(text)
+
+    def query_source(self, text: str) -> EmbeddingSource:
+        return EmbeddingSource.LIVE
 
 
 @dataclass(frozen=True)
@@ -343,3 +357,13 @@ class CachedQueryEmbedder(Embedder):
         if self._fallback is not None:
             return self._fallback.embed_query(text)
         raise RuntimeError("query is not cached and no live embedder is available")
+
+    def query_source(self, text: str) -> EmbeddingSource:
+        key = _normalize_query_key(text)
+        if key in self._vectors:
+            return EmbeddingSource.CACHE
+        if self._fallback is not None:
+            return self._fallback.query_source(text)
+        # The call will fail and retrieval will label itself degraded; returning
+        # local here avoids a false claim that a network request was attempted.
+        return EmbeddingSource.LOCAL

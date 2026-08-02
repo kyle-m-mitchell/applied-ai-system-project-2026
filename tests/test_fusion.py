@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from src.contracts import CatalogTrack, MusicIntent, RetrievalHit, SourceType
-from src.fusion import fuse_pool, percentile_ranks
+from src.fusion import FUSION_VERSION, fuse_pool, fusion_version, percentile_ranks
 
 
 def _track(track_id, genre="jazz") -> CatalogTrack:
@@ -50,6 +50,14 @@ def test_fuse_pool_promotes_the_structurally_preferred_track():
     jazz = next(h for h in out if h.track.id == 2)
     assert jazz.structured_score == 1.0            # exact genre match recorded
     assert 0.0 <= jazz.score <= 1.0                # fused score stays in range
+    assert jazz.fusion_version == FUSION_VERSION
+
+
+def test_custom_fusion_weights_get_a_distinct_audit_identifier():
+    hits = (_hit(1, 0.90, genre="blues"), _hit(2, 0.40, genre="jazz"))
+    out = fuse_pool(MusicIntent(genre="jazz"), hits, w_text=0.25, w_structured=0.75)
+    assert all(hit.fusion_version == fusion_version(0.25, 0.75) for hit in out)
+    assert out[0].fusion_version != FUSION_VERSION
 
 
 def test_fuse_pool_records_structured_zero_as_evaluated():

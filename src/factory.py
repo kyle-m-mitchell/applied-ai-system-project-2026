@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pydantic import Field
 
 from src.companion import MusicCompanion
-from src.contracts import ContractModel
+from src.contracts import ContractModel, OperatingMode
 from src.embeddings import Embedder
 from src.generation import TextGenerator
 from src.observability import EventSink, JsonlEventSink
@@ -83,6 +83,16 @@ def build_companion(
         query_cache_path=config.query_cache_path,
         live_embedder=deps.live_embedder if config.use_live_embedder else None,
     )
+    # A separate provider-free path can still use an exact committed query
+    # vector. Cache misses are expected local operation, not an outage.
+    provider_free_retriever = build_default_retriever(
+        catalog,
+        guides,
+        catalog_cache_path=config.catalog_cache_path,
+        query_cache_path=config.query_cache_path,
+        live_embedder=None,
+        fallback_mode=OperatingMode.LOCAL,
+    )
 
     sink = deps.event_sink
     if sink is None and config.event_log_path:
@@ -92,6 +102,7 @@ def build_companion(
         catalog,
         guides,
         default_retriever=retriever,
+        local_retriever=provider_free_retriever,
         generator=deps.generator if config.use_generator else None,
         event_sink=sink,
         config_fingerprint=config.fingerprint(),

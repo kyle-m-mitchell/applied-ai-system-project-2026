@@ -1,0 +1,607 @@
+"""Reusable, evidence-faithful Streamlit components for Cadence."""
+
+from __future__ import annotations
+
+import html
+from collections.abc import Callable, Iterable
+
+import streamlit as st
+
+from src.contracts import (
+    CompanionAction,
+    CompanionTurn,
+    EmbeddingSource,
+    GuardCategory,
+    MusicIntent,
+    OperatingMode,
+    RankedCandidate,
+    SignalComparison,
+    VoiceSource,
+)
+from src.scoring import candidates_from_hits
+from ui.state import UiSession
+
+
+def _e(value: object) -> str:
+    return html.escape(str(value), quote=True)
+
+
+def render_skip_link() -> None:
+    """A keyboard skip link to jump straight to the results region."""
+    st.markdown(
+        '<a class="cadence-skip" href="#cadence-results">Skip to results</a>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_results_anchor() -> None:
+    st.markdown('<div id="cadence-results"></div>', unsafe_allow_html=True)
+
+
+def announce(message: str) -> None:
+    """Emit a visually-hidden, polite live-region update for screen readers."""
+    st.markdown(
+        f'<div class="cadence-sr-only" role="status" aria-live="polite">{_e(message)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_brand(*, compact: bool = False, paused: bool = False) -> None:
+    class_name = "cadence-brand cadence-compact" if compact else "cadence-brand"
+    if paused:
+        class_name += " cadence-paused"
+    st.markdown(
+        f"""
+        <div class="{class_name}">
+          <div>
+            <div class="cadence-kicker">A transparent listening room</div>
+            <h1 class="cadence-wordmark">Cadence</h1>
+          </div>
+          <div class="cadence-wave" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </div>
+        <div class="cadence-deck">Tell me the moment. I’ll show you the match—and let you shape it.</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_disclosure() -> None:
+    st.markdown(
+        """
+        <div class="cadence-disclosure">
+          <strong>Honest demo.</strong> Cadence recommends from a validated fictional
+          200-track catalog. There is no playback. Session refinements disappear when
+          this browser session ends, and they do not train a model.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_privacy_explainer() -> None:
+    with st.popover("What does local-only mean?", icon=":material/shield:"):
+        st.markdown(
+            "**Local-only blocks AI-provider calls.** On a hosted deployment, your "
+            "request still travels from your browser to the Cadence app server. It is "
+            "held only in this session so refinements and undo work; it is not sent "
+            "onward to Gemini, written to Cadence logs, or placed in a URL."
+        )
+        st.caption(
+            "If Cadence detects personal details, provider-free routing becomes sticky "
+            "for every later refinement in that mix. Session state disappears when "
+            "you reset the mix or the Streamlit session ends."
+        )
+
+
+def render_mode_badges(turn: CompanionTurn) -> None:
+    receipt = turn.receipt
+    with st.container(
+        horizontal=True,
+        gap="small",
+        key=f"mode_badges_{receipt.request_id}",
+    ):
+        if receipt.operating_mode is OperatingMode.DEGRADED:
+            st.badge(
+                "Local fallback",
+                color="orange",
+                icon=":material/offline_bolt:",
+                help="Semantic retrieval was unavailable; TF-IDF and guides answered locally.",
+            )
+        elif receipt.embedding_source is EmbeddingSource.CACHE:
+            st.badge(
+                "Cached semantic + lexical",
+                color="blue",
+                icon=":material/database:",
+                help="The query vector came from the committed offline cache.",
+            )
+        elif receipt.embedding_source is EmbeddingSource.LIVE:
+            st.badge(
+                "Live semantic + lexical",
+                color="violet",
+                icon=":material/cloud:",
+                help="A live embedding call was used for this submitted turn.",
+            )
+        elif receipt.operating_mode is not None:
+            st.badge(
+                "Local lexical",
+                color="green",
+                icon=":material/computer:",
+                help="TF-IDF and context guides ran without an AI-provider call.",
+            )
+
+        if receipt.voice_source is VoiceSource.GENERATED:
+            st.badge("AI-selected intro", color="violet", icon=":material/auto_awesome:")
+        elif receipt.operating_mode is not None:
+            st.badge("Deterministic voice", color="gray", icon=":material/rule:")
+
+        if receipt.force_local:
+            st.badge("Provider-free", color="green", icon=":material/lock:")
+        elif receipt.network_used:
+            st.badge("Network used", color="orange", icon=":material/wifi:")
+        else:
+            st.badge("No provider call", color="green", icon=":material/wifi_off:")
+
+        if receipt.guard_category is GuardCategory.SENSITIVE:
+            st.badge("Personal detail removed", color="orange", icon=":material/privacy_tip:")
+        elif receipt.guard_category is GuardCategory.INJECTION:
+            st.badge("Embedded instruction ignored", color="orange", icon=":material/security:")
+
+
+def _goal_label(cue_id: str) -> str:
+    labels = {
+        "energy_low_v1": "lower energy",
+        "energy_high_v1": "higher energy",
+        "acoustic_high_v1": "more acoustic",
+        "acoustic_low_v1": "less acoustic",
+        "valence_high_v1": "brighter tone",
+        "valence_low_v1": "moodier tone",
+        "dance_high_v1": "more movement",
+        "dance_low_v1": "less movement",
+        "tempo_near_v1": "tempo target",
+        "tempo_range_v1": "tempo range",
+        "tempo_atleast_v1": "minimum tempo",
+        "tempo_atmost_v1": "maximum tempo",
+        "tempo_near_ui_v1": "tempo target",
+    }
+    if cue_id in labels:
+        return labels[cue_id]
+    if cue_id.startswith("ui_danceability_low"):
+        return "less movement"
+    if cue_id.startswith("ui_acousticness_low"):
+        return "less acoustic"
+    return cue_id.replace("_v1", "").replace("ui_", "").replace("_", " ")
+
+
+def render_intent(
+    intent: MusicIntent,
+    *,
+    on_remove: Callable[[str], None] | None = None,
+    token: str = "intent",
+) -> None:
+    """Show what Cadence interpreted.
+
+    When ``on_remove`` is supplied, each soft preference (genre, mood, numeric
+    goal) becomes a one-tap chip that drops that facet and rebuilds the set
+    through the same guarded pipeline. Hard filters stay as display badges; the
+    Taste Console is the single place to toggle those.
+    """
+    st.markdown('<h2 class="cadence-eyebrow">Cadence heard</h2>', unsafe_allow_html=True)
+    removable: list[tuple[str, str, str]] = []
+    if intent.genre:
+        removable.append(("genre", f"Genre · {intent.genre}", "blue"))
+    if intent.mood:
+        removable.append(("mood", f"Mood · {intent.mood}", "violet"))
+    for goal in intent.feature_goals:
+        removable.append((goal.cue_id, _goal_label(goal.cue_id), "primary"))
+
+    with st.container(horizontal=True, gap="small", key=f"intent_badges_{token}"):
+        for facet, label, color in removable:
+            if on_remove is not None:
+                if st.button(
+                    label,
+                    key=f"remove_{token}_{facet}",
+                    icon=":material/close:",
+                    type="tertiary",
+                    help="Remove this interpreted preference and rebuild the set.",
+                ):
+                    on_remove(facet)
+            else:
+                st.badge(label, color=color)
+        if intent.instrumental_only:
+            st.badge("Must be instrumental", color="green", icon=":material/check_circle:")
+        if intent.exclude_explicit:
+            st.badge("Must be clean", color="green", icon=":material/check_circle:")
+
+    if on_remove is not None and removable:
+        st.caption(
+            "Tap a preference to drop it. Green rules are hard filters—toggle those "
+            "in the Taste Console. The original text still informs retrieval."
+        )
+    else:
+        st.caption(
+            "Green badges are hard eligibility rules. Colored preference badges change "
+            "ordering. The original text still informs retrieval."
+        )
+
+
+def render_context_evidence(turn: CompanionTurn) -> None:
+    result = turn.response.retrieval
+    if result is None or not result.guides_used:
+        return
+    with st.expander(
+        f"Vocabulary sources used ({len(result.guides_used)})",
+        icon=":material/library_books:",
+    ):
+        st.caption(
+            "These guides expanded catalog vocabulary. They were evidence—not "
+            "preferences added to your request."
+        )
+        for guide in result.guides_used:
+            terms = ", ".join(guide.expansion_terms[:5]) or "no expansion terms"
+            st.markdown(f"- **{guide.title}:** {terms}")
+
+
+def render_framing(turn: CompanionTurn) -> None:
+    response = turn.response
+    framing = response.intro_message or response.message
+    st.markdown(
+        f'<div class="cadence-framing">{_e(framing)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _plain_reason(candidate: RankedCandidate, *, sensitive: bool) -> str:
+    structured = [
+        reason.removeprefix("structured: ")
+        for reason in candidate.components.reasons
+        if reason.startswith("structured: ")
+    ]
+    readable: list[str] = []
+    for reason in structured:
+        bits = reason.split()
+        if len(bits) >= 2 and bits[0] == "genre":
+            readable.append(f"matches the {bits[1]} genre preference")
+        elif len(bits) >= 2 and bits[0] == "mood":
+            readable.append(f"matches the {bits[1]} mood preference")
+        elif len(bits) >= 2:
+            feature = {
+                "energy": "energy",
+                "valence": "mood tone",
+                "danceability": "movement",
+                "acousticness": "texture",
+                "tempo_bpm": "tempo",
+            }.get(bits[0], bits[0])
+            direction = {
+                "prefer_high": "leans higher",
+                "prefer_low": "leans lower",
+                "near": "sits near the target",
+                "at_least": "meets the minimum",
+                "at_most": "stays under the maximum",
+                "range": "sits in the requested range",
+            }.get(bits[1], bits[1].replace("_", " "))
+            readable.append(f"its {feature} {direction}")
+    if readable:
+        lead = readable[0].capitalize()
+        if len(readable) > 1:
+            return f"{lead}, and {readable[1]}."
+        return lead + "."
+    matched = [
+        reason.removeprefix("matched: ")
+        for reason in candidate.components.reasons
+        if reason.startswith("matched: ")
+    ]
+    if matched and not sensitive:
+        return "Catalog language overlaps on " + ", ".join(matched[:3]) + "."
+    if candidate.components.semantic is not None and candidate.components.semantic > 0.0:
+        return "Its catalog description is semantically close to this request."
+    return "It remained inside the grounded, relevance-filtered result set."
+
+
+def _cover(track_id: int, title: str) -> str:
+    hue_a = (track_id * 37 + 18) % 360
+    hue_b = (hue_a + 54) % 360
+    initials = "".join(word[0] for word in title.split()[:2]).upper() or "♪"
+    return (
+        f'<div class="cadence-cover" aria-hidden="true" style="background:'
+        f'linear-gradient(145deg,hsl({hue_a} 72% 63%),hsl({hue_b} 70% 48%));">'
+        f"{_e(initials)}</div>"
+    )
+
+
+def _signal_bar(label: str, value: float | None, color: str) -> None:
+    if value is None:
+        st.markdown(
+            f'<div class="cadence-signal"><div class="cadence-signal-row">'
+            f'<span>{_e(label)}</span><span class="cadence-na">N/A · not evaluated</span>'
+            "</div></div>",
+            unsafe_allow_html=True,
+        )
+        return
+    pct = max(0.0, min(100.0, value * 100))
+    meaning = "evaluated · no match" if value == 0.0 else "ranking signal"
+    st.markdown(
+        f'<div class="cadence-signal" role="meter" aria-label="{_e(label)}" '
+        f'aria-valuemin="0" aria-valuemax="1" aria-valuenow="{value:.3f}">'
+        f'<div class="cadence-signal-row">'
+        f'<span>{_e(label)}</span><span>{value:.3f} · {_e(meaning)}</span></div>'
+        f'<div class="cadence-signal-track"><span class="cadence-signal-fill" '
+        f'style="width:{pct:.1f}%;background:{color};"></span></div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_track_cards(turn: CompanionTurn, *, developer: bool = False) -> None:
+    response = turn.response
+    if response.retrieval is None:
+        return
+    candidates = candidates_from_hits(response.retrieval.hits)
+    sensitive = turn.receipt.guard_category is GuardCategory.SENSITIVE
+    for rank, candidate in enumerate(candidates, start=1):
+        track = candidate.track
+        with st.container(border=True, key=f"track_card_{track.id}"):
+            st.markdown(
+                '<div class="cadence-track-head">'
+                + _cover(track.id, track.title)
+                + '<div><div class="cadence-rank">'
+                + f"Selection {rank:02d}</div>"
+                + f'<h3 class="cadence-title">{_e(track.title)}</h3>'
+                + f'<div class="cadence-artist">{_e(track.artist)}</div></div></div>',
+                unsafe_allow_html=True,
+            )
+            with st.container(horizontal=True, gap="small"):
+                st.badge(track.genre, color="blue")
+                st.badge(track.mood, color="violet")
+                st.badge(track.era, color="gray")
+                if response.intent and response.intent.instrumental_only and track.instrumental:
+                    st.badge("Instrumental confirmed", color="green")
+                if response.intent and response.intent.exclude_explicit and not track.explicit:
+                    st.badge("Clean confirmed", color="green")
+            st.markdown(
+                f'<div class="cadence-why"><strong>Why it fits:</strong> '
+                f'{_e(_plain_reason(candidate, sensitive=sensitive))}</div>',
+                unsafe_allow_html=True,
+            )
+            with st.expander("Why this track?", icon=":material/tune:"):
+                st.markdown(f"**Catalog description**  \n{track.description}")
+                st.caption(
+                    "Signals are ranking inputs—not confidence, probability, or a "
+                    "prediction that you will like the track."
+                )
+                _signal_bar("Semantic similarity", candidate.components.semantic, "#82AFFF")
+                _signal_bar("Keyword similarity", candidate.components.lexical, "#E4A24B")
+                _signal_bar("Structured relevance", candidate.components.structured, "#BEA7E5")
+                _signal_bar(
+                    "Fused relevance (before diversity)",
+                    candidate.components.fused,
+                    "#74C69D",
+                )
+
+                structured_reasons = [
+                    reason.removeprefix("structured: ")
+                    for reason in candidate.components.reasons
+                    if reason.startswith("structured: ")
+                ]
+                matched = [
+                    reason.removeprefix("matched: ")
+                    for reason in candidate.components.reasons
+                    if reason.startswith("matched: ")
+                ]
+                if structured_reasons:
+                    st.write("Structured evidence: " + ", ".join(structured_reasons))
+                if matched and not sensitive:
+                    st.write("Matched catalog terms: " + ", ".join(matched))
+                if developer:
+                    st.code(
+                        f"track_id={track.id}\n"
+                        f"source={candidate.source_type.value}\n"
+                        f"fusion={candidate.components.fusion_version}\n"
+                        f"content_hash={candidate.content_hash[:16]}…",
+                        language="text",
+                    )
+            st.caption("Fictional demo track · no playback")
+
+
+def render_action_state(turn: CompanionTurn) -> None:
+    response = turn.response
+    if response.action is CompanionAction.SAFE_RESPONSE:
+        st.warning(response.message, icon=":material/health_and_safety:")
+    elif response.action is CompanionAction.CLARIFY:
+        st.info(response.message, icon=":material/chat_bubble:")
+    elif response.action is CompanionAction.NO_MATCH:
+        st.warning(response.message, icon=":material/search_off:")
+    elif response.action is CompanionAction.DEGRADED:
+        st.warning(
+            "Semantic search was unavailable, so Cadence built this set locally "
+            "from catalog language and context guides.",
+            icon=":material/offline_bolt:",
+        )
+
+
+def render_pipeline(turn: CompanionTurn) -> None:
+    receipt = turn.receipt
+    response = turn.response
+    action = response.action
+    retrieval = turn.response.retrieval
+    trace = response.trace
+    evaluation = trace.evaluation if trace else None
+    stages: list[tuple[str, str]] = [("Guard", receipt.guard_category.value)]
+
+    if action is CompanionAction.SAFE_RESPONSE:
+        stages.extend(
+            (("Safe branch", "retrieval skipped"), ("Output", action.value))
+        )
+    elif action is CompanionAction.CLARIFY:
+        if response.intent is not None:
+            stages.append(("Intent", "needs clarification"))
+        stages.append(("Output", action.value))
+    else:
+        source = receipt.embedding_source.value if receipt.embedding_source else "lexical"
+        structured = bool(
+            retrieval and any(hit.structured_score is not None for hit in retrieval.hits)
+        )
+        stages.extend(
+            (
+                ("Intent", "typed"),
+                ("Retrieve", f"{len(receipt.candidate_ids)} · {source}"),
+                ("Fusion", "text + structured" if structured else "text only"),
+                (
+                    "Diversify",
+                    (
+                        f"{receipt.diversity.value} · changed"
+                        if trace and trace.diversity_applied
+                        else (
+                            f"{receipt.diversity.value} · unchanged"
+                            if receipt.candidate_ids
+                            else "skipped"
+                        )
+                    ),
+                ),
+            )
+        )
+        if action is CompanionAction.NO_MATCH:
+            verdict = "rejected" if evaluation and evaluation.failures else "no candidates"
+            stages.extend((("Evaluate", verdict), ("Output", action.value)))
+        else:
+            stages.extend(
+                (
+                    ("Evaluate", "passed" if evaluation and evaluation.ok else "failed"),
+                    (
+                        "Voice / guard",
+                        receipt.voice_source.value if receipt.voice_source else "none",
+                    ),
+                    ("Output", f"{action.value} · {len(receipt.final_ids)}"),
+                )
+            )
+    blocks = "".join(
+        f'<div class="cadence-stage">{_e(label)}<strong>{_e(value)}</strong></div>'
+        for label, value in stages
+    )
+    st.markdown(f'<div class="cadence-pipeline">{blocks}</div>', unsafe_allow_html=True)
+
+
+def render_developer_view(
+    turn: CompanionTurn, *, title: str = "Under the hood"
+) -> None:
+    with st.expander(title, icon=":material/schema:"):
+        st.caption(
+            "A request-local receipt—not a shared log. It contains controlled "
+            "facets, IDs, timings, and fingerprints, never the prompt."
+        )
+        render_pipeline(turn)
+        left, right = st.columns(2)
+        left.metric("Latency", f"{turn.receipt.latency_ms:.2f} ms")
+        right.metric(
+            "Candidate → final",
+            f"{len(turn.receipt.candidate_ids)} → {len(turn.receipt.final_ids)}",
+        )
+        st.json(turn.receipt.model_dump(mode="json"), expanded=False)
+        if turn.response.trace is not None:
+            st.markdown("**Bounded-agent trace**")
+            st.json(turn.response.trace.model_dump(mode="json"), expanded=False)
+        if turn.comparison is not None and turn.comparison.rows:
+            render_signal_comparison(turn.comparison)
+
+
+def _ranked_list(rows, *, highlight: set[int] | None = None) -> str:
+    highlight = highlight or set()
+    items = "".join(
+        f'<li>{_e(row.title)}'
+        + (' <span class="cadence-lift">lifted</span>' if row.track_id in highlight else "")
+        + "</li>"
+        for row in rows
+    )
+    return f'<ol class="cadence-legrank">{items}</ol>'
+
+
+def render_signal_comparison(comparison: SignalComparison, *, top_n: int = 5) -> None:
+    """Show how the candidate pool would rank under each retrieval leg.
+
+    This is the structured-preference story made visible: the same pool, ordered
+    by text alone vs by the structured preferences vs by the fused score Cadence
+    actually used. Diversity (MMR) then runs on the fused order.
+    """
+    st.markdown("**How the pool ranked under each leg** · before diversity")
+    rows = comparison.rows
+    text_top = sorted(rows, key=lambda row: (-row.text, row.track_id))[:top_n]
+    fused_top = sorted(rows, key=lambda row: (-row.fused, row.track_id))[:top_n]
+    text_ids = {row.track_id for row in text_top}
+    lifted = {row.track_id for row in fused_top if row.track_id not in text_ids}
+
+    if not comparison.structured_active:
+        st.caption(
+            "No structured preference this turn, so the structured leg did not run — "
+            "the fused order equals the text-only order."
+        )
+        columns = st.columns(2)
+        legs = (("Text only · keywords + semantics", text_top, set()),
+                ("Fused · what Cadence used", fused_top, set()))
+    else:
+        structured_top = sorted(
+            (row for row in rows if row.structured is not None),
+            key=lambda row: (-(row.structured or 0.0), row.track_id),
+        )[:top_n]
+        columns = st.columns(3)
+        legs = (
+            ("Text only · keywords + semantics", text_top, set()),
+            ("Structured only · your preferences", structured_top, set()),
+            ("Fused · what Cadence used", fused_top, lifted),
+        )
+    for column, (label, leg_rows, highlight) in zip(columns, legs):
+        with column:
+            st.caption(label)
+            st.markdown(_ranked_list(leg_rows, highlight=highlight), unsafe_allow_html=True)
+    if comparison.structured_active and lifted:
+        st.caption(
+            "“Lifted” marks tracks the structured leg pulled into the top set that "
+            "text ranking alone would have missed."
+        )
+
+
+def _track_name_lookup(state: UiSession) -> dict[int, str]:
+    lookup: dict[int, str] = {}
+    for snapshot in state.snapshots:
+        result = snapshot.turn.response.retrieval
+        if result:
+            lookup.update({hit.track.id: hit.track.title for hit in result.hits})
+    return lookup
+
+
+def render_evolution(state: UiSession) -> None:
+    entries = [snapshot.evolution for snapshot in state.snapshots if snapshot.evolution]
+    if not entries:
+        return
+    lookup = _track_name_lookup(state)
+    st.markdown("## How the set evolved")
+    visible = entries[-5:]
+    if len(entries) > len(visible):
+        st.caption(f"Showing the latest {len(visible)} of {len(entries)} changes.")
+    for index, entry in enumerate(reversed(visible), start=1):
+        with st.container(border=True, key=f"evolution_{index}"):
+            st.markdown("\n".join(f"- {change}" for change in entry.changes))
+            if entry.entered_ids:
+                st.caption(
+                    "Entered: "
+                    + ", ".join(lookup.get(track_id, f"Track {track_id}") for track_id in entry.entered_ids)
+                )
+            if entry.dropped_ids:
+                st.caption(
+                    "Left: "
+                    + ", ".join(lookup.get(track_id, f"Track {track_id}") for track_id in entry.dropped_ids)
+                )
+
+
+def render_first_run_story() -> None:
+    st.markdown("## A recommendation you can inspect")
+    columns = st.columns(3)
+    steps: Iterable[tuple[str, str, str]] = (
+        ("01", "Describe", "Use a mood, moment, activity, genre, or musical constraint."),
+        ("02", "Inspect", "See interpreted intent, evidence, operating mode, and guardrails."),
+        ("03", "Shape", "Remix with typed controls, then undo without losing the original set."),
+    )
+    for column, (number, title, body) in zip(columns, steps):
+        with column.container(border=True):
+            st.caption(number)
+            st.markdown(f"**{title}**")
+            st.write(body)

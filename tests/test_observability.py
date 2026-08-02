@@ -92,7 +92,7 @@ def test_jsonl_sink_writes_one_valid_line_per_event(tmp_path):
     lines = sink.path.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 2
     parsed = json.loads(lines[0])
-    assert parsed["request_id"] == "r" and parsed["schema_version"] == "1"
+    assert parsed["request_id"] == "r" and parsed["schema_version"] == "2"
     # Round-trips back into the contract.
     assert CompanionEvent.model_validate(parsed).action == CompanionAction.CLARIFY
 

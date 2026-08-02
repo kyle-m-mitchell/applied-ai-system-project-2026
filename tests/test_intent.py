@@ -81,3 +81,31 @@ def test_pure_free_text_has_no_goals_reproduction_path(parser):
 def test_cues_carry_controlled_ids(parser):
     ids = {g.cue_id for g in parser.parse("low energy acoustic around 100 bpm").feature_goals}
     assert ids == {"energy_low_v1", "acoustic_high_v1", "tempo_near_v1"}
+
+
+def test_conversational_comparatives_map_to_the_same_controlled_goals(parser):
+    goals = _goals(parser, "make it calmer and more acoustic")
+    assert ("energy", "prefer_low", None) in goals
+    assert ("acousticness", "prefer_high", None) in goals
+
+
+def test_conflicting_directions_ask_instead_of_double_scoring(parser):
+    intent = parser.parse("calm but intense music")
+    assert intent.needs_clarification
+    assert intent.feature_goals == ()
+    assert "conflicting" in intent.clarification
+
+
+@pytest.mark.parametrize(
+    "text, feature",
+    [
+        ("make it less acoustic", "acousticness"),
+        ("make it less danceable", "danceability"),
+    ],
+)
+def test_negative_comparatives_do_not_match_the_nested_positive(parser, text, feature):
+    intent = parser.parse(text)
+    assert not intent.needs_clarification
+    assert len(intent.feature_goals) == 1
+    assert intent.feature_goals[0].feature == feature
+    assert intent.feature_goals[0].relation.value == "prefer_low"

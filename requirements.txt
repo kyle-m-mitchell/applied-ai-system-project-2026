@@ -1,12 +1,7 @@
-# Runtime + test dependencies actually used today.
-pydantic>=2.13.4,<3
-pytest
+# Community Cloud reads the root requirements file, so this is the reproducible
+# development + deployed-UI environment.  Use requirements-core.txt for a lean
+# CLI-only install.
+-r requirements-core.txt
 
-# certifi: pure-Python CA bundle used only by the optional Gemini path for TLS
-# verification (some Pythons ship without a usable system trust store). The code
-# falls back to the system default if it is absent; no compilation.
-certifi
-
-# Added in later features when they are actually imported:
-#   streamlit  -> the web UI feature (supports Python 3.10-3.14)
-# The core app, full test suite, and local fallback need none of the above extras.
+pytest>=9.1.1,<10
+streamlit==1.60.0

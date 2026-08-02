@@ -1,15 +1,13 @@
-"""Grounding evaluator: the guardrail before the companion speaks.
+"""Deterministic grounding and presentation guardrails.
 
-``evaluate_result`` is the strong check: it confirms a result is trustworthy —
-real ids, no duplicates, hard constraints held, evidence present, within the
-requested count.
+``evaluate_result`` checks the authoritative recommendation payload: real IDs,
+no duplicates, hard constraints, evidence, and count.
 
-``check_grounded_text`` is a narrower, defense-in-depth check on *generated
-framing only*. It does not parse arbitrary claims; it flags a **quoted** title
-that is not in the evidence. That is sufficient here because the authoritative
-track list is always rendered deterministically by the system, so a generator
-can never change *which* tracks are recommended — only its framing prose is at
-risk, and a quoted invented title is the most likely way that shows up.
+``check_grounded_text`` checks optional model-written *framing*. The model never
+chooses tracks, and it is not allowed to narrate track facts: verified song facts
+belong to the deterministic cards. Prose that describes the music, violates
+Cadence's contract, leaks markup, makes persona claims, or adds calls to action is
+discarded and the deterministic template is shown instead.
 """
 
 from __future__ import annotations
@@ -20,13 +18,72 @@ from collections.abc import Collection, Sequence
 from src.contracts import EvaluationReport, MusicIntent, RetrievalHit
 
 
-# Song titles are conventionally double-quoted; contractions use apostrophes, so
-# matching only double quotes avoids false positives on "don't", "it's", etc.
-_QUOTED = re.compile(r"[\"“”]([^\"“”]{2,})[\"“”]")
+_URL_OR_MARKUP = re.compile(
+    r"(?:https?://|www\.|<[^>]*>|\[[^\]]+\]\([^)]*\)|`)", re.IGNORECASE
+)
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_QUOTES = re.compile(r"[\"“”]")
+_TERMINALS = re.compile(r"[.!?]+")
+_FORBIDDEN_PERSONA = (
+    re.compile(r"\b(?:i am|i'm)\s+(?:an?\s+)?(?:human|person|doctor|therapist|ai|model)\b", re.I),
+    re.compile(r"\bi\s+(?:have\s+)?(?:heard|listened(?:\s+to)?|experienced|remember|feel|love|hate)\b", re.I),
+    re.compile(r"\b(?:diagnos(?:e|is)|medical advice|treatment plan|crisis counselor)\b", re.I),
+    re.compile(r"\bas\s+(?:an?\s+)?human\b", re.I),
+)
+_TITLE_LIKE = re.compile(
+    r"\b(?:[A-Z][a-z0-9'’-]+|[A-Z]{2,})(?:\s+(?:[A-Z][a-z0-9'’-]+|[A-Z]{2,})){1,}\b"
+)
+_TRACK_DIRECTIVE = re.compile(
+    r"\b(?:try|play|hear|listen to|start with)\b", re.IGNORECASE
+)
+_UNSAFE_FRAMING = re.compile(
+    r"\b(?:password|passcode|credit card|social security|api key|private key|"
+    r"send me|enter your|stop taking|medication|medical advice|cures? (?:depression|anxiety)|"
+    r"hurt yourself|kill yourself|end your life|suicide|go hurt|visit this site)\b",
+    re.IGNORECASE,
+)
+# Cadence's optional model selects only the social bridge around a result. It may
+# not describe the result itself. This deliberately conservative boundary is
+# easier to verify than pretending a keyword checker can fact-check arbitrary
+# prose. Facts such as tempo, genre, vocals, or energy are rendered from validated
+# catalog fields elsewhere in the application.
+_TRACK_FACT_LANGUAGE = re.compile(
+    r"\b(?:"
+    r"slow(?:er)?|fast(?:er)?|up[ -]?tempo|down[ -]?tempo|tempo|bpm|"
+    r"acoustic|unplugged|electronic|synthetic|organic|"
+    r"instrumentals?|vocals?|lyrics?|lyrical|sung|wordless|"
+    r"genres?|jazz|rock|pop|hip[ -]?hop|classical|country|blues|reggae|"
+    r"folk|metal|punk|soul|funk|r\s*&\s*b|lo[ -]?fi|ambient|edm|"
+    r"danceable|dancefloor|rhythmic|groov(?:e|y)|bouncy|"
+    r"energetic|energy|high[ -]?energy|low[ -]?energy|"
+    r"calm|mellow|soft|loud|quiet|hushed|intense|driving|punchy|gentle|"
+    r"soothing|relaxing|dreamy|reflective|bright|dark|upbeat|moody|"
+    r"melanchol(?:y|ic)|happy|sad|warm|cool|"
+    r"clean|explicit|eras?|decades?"
+    r")\b",
+    re.IGNORECASE,
+)
+MAX_FRAMING_CHARS = 280
+MAX_FRAMING_WORDS = 45
+
+# The language model is a bounded selector, not an unconstrained copywriter.
+# Every publishable line is application-owned, fact-free microcopy. Exact membership
+# closes the open-world hole that any keyword denylist would leave (release dates,
+# artist nationalities, awards, durations, and infinitely many other claims).
+APPROVED_FRAMINGS: tuple[str, ...] = (
+    "Here's a thoughtfully chosen set for the moment you described.",
+    "I found a few picks worth meeting right where you are.",
+    "A fresh set is ready whenever you are.",
+    "Let's start here, then shape the next set together.",
+    "Consider this a first pass; we can tune it from here.",
+    "Here are a few directions worth exploring together.",
+    "I pulled together a small set for this particular moment.",
+    "Let's give this moment a soundtrack and see where it takes you.",
+)
 
 
 class GroundingEvaluator:
-    """Validate retrieval results and any generated text against the evidence."""
+    """Validate retrieval results and model-selected framing against explicit rules."""
 
     def evaluate_result(
         self,
@@ -56,32 +113,59 @@ class GroundingEvaluator:
 
     @staticmethod
     def _has_evidence(hit: RetrievalHit) -> bool:
-        """A hit is grounded if any leg justifies it: matched terms, a semantic
-        similarity, or a positive structured relevance. A structured ``0.0`` is
-        "evaluated, no match" and is *not* evidence; ``None`` is "not evaluated"."""
+        """A hit is grounded when at least one ranking leg supplies evidence."""
         return (
             bool(hit.matched_terms)
-            or hit.semantic_score is not None
+            or (hit.semantic_score is not None and hit.semantic_score > 0.0)
             or (hit.structured_score is not None and hit.structured_score > 0.0)
         )
 
     def check_grounded_text(
         self,
         text: str,
-        allowed_titles: Collection[str],
+        evidence_names: Collection[str],
     ) -> EvaluationReport:
-        """Reject framing that quotes a title/name not in the evidence.
+        """Enforce Cadence's small, deterministic generated-framing contract.
 
-        Narrow by design (see the module docstring): it catches quoted names, not
-        every conceivable claim — the track facts themselves are never the
-        generator's to produce.
+        Framing is one short social-bridge sentence with no music descriptions,
+        track/artist names, quotation marks, links, markup, control characters,
+        human/listening claims, or medical-role language. The validated
+        application renders track facts separately.
         """
-        if not text or not text.strip():
+        stripped = text.strip()
+        failures: list[str] = []
+        if not stripped:
             return EvaluationReport(ok=False, failures=("empty message",))
-        allowed = {title.casefold() for title in allowed_titles}
-        failures = tuple(
-            f'mentions a track not in the evidence: "{quoted}"'
-            for quoted in _QUOTED.findall(text)
-            if quoted.casefold() not in allowed
+        if stripped not in APPROVED_FRAMINGS:
+            failures.append("framing is not an approved bounded line")
+        if len(stripped) > MAX_FRAMING_CHARS or len(stripped.split()) > MAX_FRAMING_WORDS:
+            failures.append("framing exceeds the bounded length")
+        if "\n" in stripped or "\r" in stripped or len(_TERMINALS.findall(stripped)) > 1:
+            failures.append("framing must be one sentence")
+        if _URL_OR_MARKUP.search(stripped):
+            failures.append("framing contains a URL or markup")
+        if _CONTROL.search(stripped):
+            failures.append("framing contains control characters")
+        if _QUOTES.search(stripped):
+            failures.append("framing contains quotation marks")
+        if any(pattern.search(stripped) for pattern in _FORBIDDEN_PERSONA):
+            failures.append("framing violates the Cadence persona boundary")
+        if _TITLE_LIKE.search(stripped) or _TRACK_DIRECTIVE.search(stripped):
+            failures.append("framing may be naming or directing a specific track")
+        if _UNSAFE_FRAMING.search(stripped):
+            failures.append("framing contains unsafe or credential-seeking language")
+        if _TRACK_FACT_LANGUAGE.search(stripped):
+            failures.append("framing attempts to describe track facts")
+
+        folded = stripped.casefold()
+        mentioned = sorted(
+            {
+                name
+                for name in evidence_names
+                if len(name.strip()) >= 3 and name.casefold() in folded
+            },
+            key=str.casefold,
         )
-        return EvaluationReport(ok=not failures, failures=failures)
+        if mentioned:
+            failures.append("framing names a track or artist reserved for the app")
+        return EvaluationReport(ok=not failures, failures=tuple(failures))

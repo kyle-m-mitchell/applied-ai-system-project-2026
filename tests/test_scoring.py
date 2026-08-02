@@ -7,6 +7,7 @@ from src.scoring import (
     FUSION_HYBRID,
     FUSION_LEXICAL,
     FUSION_SEMANTIC,
+    FUSION_STRUCTURED,
     candidate_from_hit,
     candidates_from_hits,
 )
@@ -62,6 +63,18 @@ def test_none_is_not_zero():
     c2 = candidate_from_hit(_hit(2, 0.5, semantic=0.5))  # lexical never evaluated
     assert c2.components.lexical is None
     assert "lexical" not in c2.components.available_signals
+
+
+def test_explicit_fusion_version_survives_candidate_mapping():
+    hit = _hit(1, 0.7, semantic=0.8, lexical=0.4).model_copy(
+        update={
+            "structured_score": 0.9,
+            "fusion_version": "percentile:text=0.25,structured=0.75;v1",
+        }
+    )
+    candidate = candidate_from_hit(hit)
+    assert candidate.components.fusion_version == hit.fusion_version
+    assert candidate.components.fusion_version != FUSION_STRUCTURED
 
 
 def test_candidates_from_hits_preserves_order():

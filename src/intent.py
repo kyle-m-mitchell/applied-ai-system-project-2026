@@ -36,18 +36,27 @@ _CLEAN_CUES = (
 _PREFERENCE_CUES: tuple[tuple[str, str, FeatureRelation, tuple[str, ...]], ...] = (
     ("energy_high_v1", "energy", FeatureRelation.PREFER_HIGH,
      ("high energy", "high-energy", "energetic", "upbeat", "intense", "hype",
-      "workout", "pumping", "banger", "fast paced", "fast-paced", "driving")),
+      "more energetic", "more energy", "workout", "pumping", "banger",
+      "fast paced", "fast-paced", "driving")),
     ("energy_low_v1", "energy", FeatureRelation.PREFER_LOW,
      ("low energy", "low-energy", "calm", "mellow", "sleepy", "gentle", "soft",
-      "soothing", "downtempo", "laid back", "laid-back", "relaxing")),
+      "calmer", "less energy", "soothing", "downtempo", "laid back",
+      "laid-back", "relaxing")),
     ("acoustic_high_v1", "acousticness", FeatureRelation.PREFER_HIGH,
-     ("acoustic", "unplugged")),
+     ("acoustic", "more acoustic", "unplugged")),
+    ("acoustic_low_v1", "acousticness", FeatureRelation.PREFER_LOW,
+     ("more electronic", "less acoustic")),
     ("valence_high_v1", "valence", FeatureRelation.PREFER_HIGH,
-     ("happy", "cheerful", "uplifting", "feel good", "feel-good", "joyful", "sunny")),
+     ("happy", "happier", "brighter", "cheerful", "uplifting", "feel good",
+      "feel-good", "joyful", "sunny")),
     ("valence_low_v1", "valence", FeatureRelation.PREFER_LOW,
-     ("sad", "melancholy", "melancholic", "somber", "gloomy", "downbeat", "wistful")),
+     ("sad", "moodier", "darker", "melancholy", "melancholic", "somber",
+      "gloomy", "downbeat", "wistful")),
     ("dance_high_v1", "danceability", FeatureRelation.PREFER_HIGH,
-     ("danceable", "to dance", "groovy", "party", "club")),
+     ("danceable", "more danceable", "more movement", "to dance", "groovy",
+      "party", "club")),
+    ("dance_low_v1", "danceability", FeatureRelation.PREFER_LOW,
+     ("less danceable", "less movement")),
 )
 
 _TEMPO_MIN_BPM, _TEMPO_MAX_BPM = 50.0, 200.0
@@ -59,6 +68,11 @@ _TEMPO_NEAR = re.compile(r"(?:around|about|near|roughly|~)?\s*(\d{2,3})\s*bpm")
 _TOKEN = re.compile(r"[a-z0-9&]+")
 REDACTED_TOKEN = "[redacted]"  # kept out of the searchable-token count
 
+# These words carry useful activity context even though they also imply a typed
+# preference. Keep them in the neutral query when a preference is replaced; the
+# rebuilt query appends the *current* canonical preference beside that context.
+_CONTEXT_ANCHORS = {"workout", "party", "club", "to dance"}
+
 
 def _has_phrase(haystack: str, phrase: str) -> bool:
     """Match a whole-word phrase, allowing '&' (for "r&b") at the boundaries."""
@@ -67,6 +81,101 @@ def _has_phrase(haystack: str, phrase: str) -> bool:
 
 def _clamp_bpm(value: float) -> float:
     return min(_TEMPO_MAX_BPM, max(_TEMPO_MIN_BPM, value))
+
+
+def _remove_phrase(text: str, phrase: str) -> str:
+    return re.sub(
+        rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])",
+        " ",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+
+def neutral_query_text(text: str, intent: MusicIntent) -> str:
+    """Remove the controlled facets represented by ``intent`` from ``text``.
+
+    Refinement must not keep stale words such as ``jazz`` or ``happy`` after the
+    corresponding typed facet becomes ``rock`` or ``moody``. We remove only the
+    facets this parsed intent actually owns, preserving unrelated activity and
+    situational context for retrieval.
+    """
+    neutral = text
+    phrases: list[str] = []
+    if intent.genre:
+        phrases.append(intent.genre)
+    if intent.mood:
+        phrases.append(intent.mood)
+    if intent.instrumental_only:
+        phrases.extend(_INSTRUMENTAL_CUES)
+    if intent.exclude_explicit:
+        phrases.extend(_CLEAN_CUES)
+
+    goal_keys = {(goal.feature, goal.relation) for goal in intent.feature_goals}
+    for _cue_id, feature, relation, triggers in _PREFERENCE_CUES:
+        if (feature, relation) in goal_keys:
+            phrases.extend(
+                trigger for trigger in triggers if trigger not in _CONTEXT_ANCHORS
+            )
+    if any(goal.feature == "tempo_bpm" for goal in intent.feature_goals):
+        for pattern in (_TEMPO_RANGE, _TEMPO_ATLEAST, _TEMPO_ATMOST, _TEMPO_NEAR):
+            neutral = pattern.sub(" ", neutral.lower())
+
+    for phrase in sorted(set(phrases), key=len, reverse=True):
+        neutral = _remove_phrase(neutral, phrase)
+    neutral = re.sub(r"\b(?:and|with)\b(?=\s*(?:[,;]|$))", " ", neutral, flags=re.I)
+    neutral = re.sub(r"\s+", " ", neutral)
+    return neutral.strip(" ,;:-")
+
+
+def _canonical_goal_text(goal: FeatureGoal) -> str:
+    if goal.relation is FeatureRelation.PREFER_HIGH:
+        return {
+            "energy": "high energy",
+            "acousticness": "acoustic",
+            "valence": "bright",
+            "danceability": "danceable",
+            "tempo_bpm": "fast tempo",
+        }[goal.feature]
+    if goal.relation is FeatureRelation.PREFER_LOW:
+        return {
+            "energy": "low energy",
+            "acousticness": "less acoustic",
+            "valence": "moody",
+            "danceability": "less danceable",
+            "tempo_bpm": "slow tempo",
+        }[goal.feature]
+    if goal.relation is FeatureRelation.RANGE:
+        unit = " bpm" if goal.feature == "tempo_bpm" else ""
+        return f"{goal.feature} between {goal.low:g} and {goal.high:g}{unit}"
+    relation = {
+        FeatureRelation.NEAR: "around",
+        FeatureRelation.AT_LEAST: "at least",
+        FeatureRelation.AT_MOST: "at most",
+    }[goal.relation]
+    unit = " bpm" if goal.feature == "tempo_bpm" else ""
+    return f"{goal.feature} {relation} {goal.target:g}{unit}"
+
+
+def rebuild_retrieval_query(intent: MusicIntent, *source_texts: str) -> str:
+    """Build one current, contradiction-free query from neutral context + facets."""
+    neutral_parts: list[str] = []
+    for source in source_texts:
+        part = neutral_query_text(source, intent)
+        if part and part.casefold() not in {item.casefold() for item in neutral_parts}:
+            neutral_parts.append(part)
+
+    facets: list[str] = []
+    if intent.genre:
+        facets.append(intent.genre)
+    if intent.mood:
+        facets.append(intent.mood)
+    if intent.instrumental_only:
+        facets.append("instrumental")
+    if intent.exclude_explicit:
+        facets.append("clean")
+    facets.extend(_canonical_goal_text(goal) for goal in intent.feature_goals)
+    return " ".join(neutral_parts + facets).strip()
 
 
 def _tempo_goal(lowered: str) -> FeatureGoal | None:
@@ -96,7 +205,19 @@ def _feature_goals(lowered: str) -> tuple[FeatureGoal, ...]:
     """Extract all directional numeric goals present in the text (deduped by cue)."""
     goals: list[FeatureGoal] = []
     for cue_id, feature, relation, phrases in _PREFERENCE_CUES:
-        if any(_has_phrase(lowered, phrase) for phrase in phrases):
+        matched = {phrase for phrase in phrases if _has_phrase(lowered, phrase)}
+
+        # A bare positive word is a substring phrase inside these explicit
+        # negatives ("less acoustic" contains "acoustic"). Do not manufacture a
+        # conflict unless a separate positive phrase is also present.
+        if cue_id == "acoustic_high_v1" and matched == {"acoustic"}:
+            if _has_phrase(lowered, "less acoustic"):
+                matched.clear()
+        if cue_id == "dance_high_v1" and matched == {"danceable"}:
+            if _has_phrase(lowered, "less danceable"):
+                matched.clear()
+
+        if matched:
             goals.append(FeatureGoal(feature=feature, relation=relation, cue_id=cue_id))
     tempo = _tempo_goal(lowered)
     if tempo is not None:
@@ -116,6 +237,25 @@ class IntentParser:
         genre = next((g for g in _GENRES if _has_phrase(lowered, g)), None)
         mood = next((m for m in _MOODS if _has_phrase(lowered, m)), None)
         feature_goals = _feature_goals(lowered)
+
+        goal_features = [goal.feature for goal in feature_goals]
+        conflicts = sorted(
+            {feature for feature in goal_features if goal_features.count(feature) > 1}
+        )
+        if conflicts:
+            friendly = ", ".join(conflicts).replace("danceability", "movement")
+            return MusicIntent(
+                query=text,
+                genre=genre,
+                mood=mood,
+                instrumental_only=instrumental_only,
+                exclude_explicit=exclude_explicit,
+                limit=limit,
+                needs_clarification=True,
+                clarification=(
+                    f"I heard conflicting {friendly} directions. Which one should lead?"
+                ),
+            )
 
         recognized = bool(
             genre or mood or instrumental_only or exclude_explicit or feature_goals

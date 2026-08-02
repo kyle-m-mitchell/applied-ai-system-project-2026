@@ -2,10 +2,10 @@
 %% This is the intended end state. For what actually exists today, see
 %% diagrams/architecture.mmd. Solid arrows = runtime/indexing data flow;
 %% dotted arrows = dependency, testing, or observability.
-%% Still planned here: Streamlit UI, session-only memory + feedback, and a
-%% provider structured-intent parser. (The evaluation report card, the
-%% privacy-safe JSONL receipt, and the structured-preference hybrid now exist —
-%% see diagrams/architecture.mmd.)
+%% Phase 4's Streamlit UI, reversible session snapshots, feedback capture,
+%% evaluation report, JSONL receipt, and structured-preference hybrid now exist.
+%% Still planned here: feedback-informed ranking, real-dataset ingestion,
+%% provider structured intent, and launch infrastructure.
 
 flowchart TB
     subgraph RUNTIME["Runtime request and response"]
@@ -15,11 +15,11 @@ flowchart TB
         INPUT_GUARD["Input + privacy guard<br/>size · PII/secret redaction · injection · crisis safe-response"]
         AGENT["MusicCompanion — bounded agent<br/>intent parser (rule now, provider structured-intent planned)<br/>allowlisted actions + privacy-safe trace"]
         RETRIEVER["Retriever interface<br/>TF-IDF · context guides · Gemini embeddings · hybrid + provenance"]
-        RANKER["Hard filters + fusion + MMR diversity<br/>semantic · lexical · structured-preference · session feedback (planned)"]
+        RANKER["Hard filters + fusion + MMR diversity<br/>semantic · lexical · structured preference<br/>evaluated session-personalization signal (planned)"]
         EVALUATOR["Grounding evaluator<br/>ids · duplicates · constraints · evidence · count · framing grounding"]
         POLICY["Situation policy<br/>recommend · clarify · no-match · safe-response · degraded"]
-        VOICE["Cadence voice<br/>deterministic baseline + optional grounded Gemini framing"]
-        OUTPUT_GUARD["Output check<br/>schema · action/hit invariants · framing grounding"]
+        VOICE["Cadence voice<br/>deterministic baseline + optional Gemini selection<br/>from application-owned microcopy"]
+        OUTPUT_GUARD["Output check<br/>schema · action/hit invariants · exact framing allowlist"]
         RESULT(["Recommendations<br/>songs · reasons · evidence · operating mode"])
         SAFE(["Fixed safe response<br/>crisis · blocked input"])
         FALLBACK["Local degraded mode<br/>TF-IDF retrieval + deterministic voice (no provider)"]
@@ -43,23 +43,23 @@ flowchart TB
 
     subgraph GROUNDING["Grounding, provider, and session context"]
         direction LR
-        CURATOR(["Human curator"])
-        SOURCES[("Validated catalog + curated context guides<br/>(+ real-dataset ingestion, planned)")]
+        CURATOR(["Human curator<br/>(launch review pending)"])
+        SOURCES[("Validated generated catalog + AI-drafted context guides<br/>(+ real-dataset ingestion, planned)")]
         INDEX["Retrieval index<br/>TF-IDF (2 sources) + Gemini embeddings, committed cache<br/>semantic+lexical (+structured) hybrid"]
-        MEMORY[("Session-only memory (PLANNED)<br/>preferences · feedback · recent context")]
-        GEMINI["Gemini provider adapter (stdlib REST, optional)<br/>embeddings + Cadence framing · structured intent planned<br/>backoff/retry, then local fallback"]
+        MEMORY[("Session-only state<br/>intent + reversible snapshots + rating now<br/>feedback-informed ranking planned")]
+        GEMINI["Gemini provider adapter (stdlib REST, optional)<br/>embeddings + approved Cadence-line selection<br/>structured intent planned · bounded fallback"]
 
-        CURATOR --> SOURCES
+        CURATOR -. "review gate" .-> SOURCES
         SOURCES --> INDEX
         INDEX --> RETRIEVER
-        MEMORY -->|"session context + feedback"| AGENT
+        MEMORY -->|"typed session intent now; feedback ranking planned"| AGENT
         GEMINI -. "AI capability" .-> APP
     end
 
     subgraph RELIABILITY["Reliability, evaluation, and human review"]
         direction LR
         TESTER(["Human tester"])
-        TESTS["pytest + evaluation harness (offline)<br/>labeled normal · edge · adversarial · outage cases"]
+        TESTS["pytest + Streamlit AppTest + evaluation harness<br/>normal · edge · privacy · adversarial · outage cases"]
         REPORT[("Evaluation report card<br/>quality metrics + pass/fail gate")]
         LOGS[("Privacy-safe JSONL receipt (opt-in)<br/>ids · scores · modes · fingerprints — never query text")]
 

@@ -1,35 +1,86 @@
-# 🎵 Music Recommender Simulation
+# Cadence — Applied AI Music Companion
 
 ## Project Summary
 
-In this project you will build and explain a small music recommender system.
+The base project was **Music Recommender Simulation**: a deterministic,
+content-based scorer over 20 fictional songs and one structured taste profile.
+It loaded CSV data, compared genre/mood/numeric features with a readable weighted
+formula, and printed a top-k list. It had no natural-language interface,
+retrieval, language model, agent, guardrails, or evaluation system.
 
-Your goal is to:
+Cadence extends that original—not replaces it—into a privacy-first, explainable
+music-discovery companion. It now has a validated 200-track catalog,
+multi-source RAG (catalog + context guides), cached/live semantic embeddings,
+lexical + structured-preference fusion, a bounded agent, grounded companion
+voice, local fallbacks, privacy-safe receipts, an evaluation report card, and a
+fully integrated Streamlit listening room. The same `MusicCompanion` powers the
+CLI, UI, tests, and evaluator; the UI contains no duplicate ranking logic.
 
-- Represent songs and a user "taste profile" as data
-- Design a scoring rule that turns that data into recommendations
-- Evaluate what your system gets right and wrong
-- Reflect on how this mirrors real world AI recommenders
-
-The original project is a deterministic, content-based recommender over a
-20-song fictional catalog. The applied-AI extension is being built
-incrementally around that trusted scoring core. Its first completed foundation
-adds strict runtime contracts and a shared `RecommendationService`, so the CLI,
-future Streamlit UI, AI agent, and evaluation harness all use the same validated
-application path. Feature 2 expands the authoritative catalog to **200 fictional
-tracks across 20 evenly represented genres** and adds retrieval-ready
-descriptions, tags, contexts, instruments, content flags, and era metadata. The
-original 20 records remain preserved and regression-tested. Features 3, 3b, and 4 add
-the **retrieval** half of RAG — a local, dependency-free TF-IDF retriever over the
-catalog, a second source of curated context guides that expand a query toward
-catalog vocabulary, and Gemini **embeddings with hybrid (semantic + lexical)
-ranking** — all behind one `Retriever` interface, with provenance, an honest
-fallback, and a before/after demo.
+The product surface makes the AI legible: listeners see interpreted intent,
+evidence and score components, cached/live/local provenance, hard constraints,
+and a reversible Taste Console. The app defaults to provider-free execution and
+remains useful with no API key or network access.
 
 For the complete research, decisions, roadmap, architecture status, teaching
 notes, and new-chat recovery prompt, see the
 [Project Handbook](docs/PROJECT_HANDBOOK.md). Dataset provenance and review are
-documented in the [Catalog Data Card](docs/CATALOG_DATA_CARD.md).
+documented in the [Catalog Data Card](docs/CATALOG_DATA_CARD.md). Phase 4's
+product and privacy decisions are explained in the
+[UI Design and Teaching Guide](docs/UI_DESIGN.md).
+
+---
+
+## The Cadence UI (Streamlit)
+
+Cadence ships a flagship web UI — a transparent "listening room" that turns a typed
+request into an evidence-backed set you can interrogate and reshape.
+
+**Run it locally (offline, no key needed):**
+```bash
+pip install -r requirements.txt      # includes Streamlit (Community Cloud reads this file)
+streamlit run streamlit_app.py
+```
+It runs fully offline from the committed embedding cache and local TF-IDF fallback.
+For optional live Gemini, copy `.streamlit/secrets.toml.example` →
+`.streamlit/secrets.toml` and add a key (or keep **Local-only** on to block every
+provider call). A reproducible, browser-free tour of the flagship states:
+`python scripts/ui_walkthrough.py`.
+
+**What it shows**
+- **"Cadence heard"** — the interpreted intent as chips; tap one to drop it and rebuild.
+- **Evidence cards** — genre/mood/era, a plain-language "why it fits", and a
+  breakdown with `role="meter"` bars for semantic / keyword / structured / fused
+  relevance (`None` = *not evaluated* vs `0.0` = *evaluated, no match*).
+- **Taste Console** — a transactional mixing desk (energy · tone · movement ·
+  texture · tempo · must-have filters · variety) that runs once, on *Remix*.
+- **Refine in words** — a guarded follow-up ("make it calmer, more acoustic").
+- **Live badges** — local / cached / live, provider-free, degraded, and privacy.
+- **Evolution + undo** — every change is reversible; set-diffs show what entered/left.
+- **Developer view** — a request-local receipt, the true pipeline path, and a
+  **text-only vs structured vs fused** ranking comparison that makes the
+  structured-preference lift visible ("lifted" marks tracks text alone would miss).
+
+### Gallery
+Screenshots live in `assets/` (owner capture step — needs a browser):
+
+| Capture | File |
+|---|---|
+| Results dashboard + evidence cards | `assets/ui-results.png` |
+| The Taste Console mid-remix | `assets/ui-console.png` |
+| Developer view with the signal comparison | `assets/ui-developer.png` |
+| A PII query redacted and kept local | `assets/ui-privacy.png` |
+
+Embed once captured, e.g. `![Results](assets/ui-results.png)`.
+
+### Deploy to Streamlit Community Cloud (free)
+1. Push this repo to GitHub.
+2. On [share.streamlit.io](https://share.streamlit.io), create an app pointing at
+   `streamlit_app.py`.
+3. *(Optional)* add `GEMINI_API_KEY` under **App → Settings → Secrets** for live
+   Gemini; without it the app stays fully functional on cached/local paths.
+4. Community Cloud installs `requirements.txt` automatically — no extra config.
+
+Product and privacy rationale: [UI Design and Teaching Guide](docs/UI_DESIGN.md).
 
 ---
 
@@ -162,7 +213,7 @@ provider-embedding retriever.
 ### Multi-source retrieval: context guides (Feature 3b)
 
 The catalog is one retrieval source. Feature 3b adds a **second source** —
-curated, human-readable **context guides** in
+versioned, human-readable **context guides** in
 [`data/context_guides/`](data/context_guides/), one Markdown file per situation
 (Studying & Focus, Workout & Energy, Rainy Day, …). This is what makes the system
 *multi-source* RAG.
@@ -254,13 +305,13 @@ allowlist of actions and emitting a **privacy-safe trace**.
   five near-duplicates; relevance still leads.
 - **Grounding evaluator** ([`src/evaluator.py`](src/evaluator.py)) verifies every
   recommended track is real, unique, constraint-respecting, and evidenced — and
-  that a generated message names **only** retrieved tracks.
+  that optional model output is exactly one code-defined, fact-free Cadence
+  line. Rejected hits and rejected prose never survive into the public payload.
 - **Cadence** ([`src/voice.py`](src/voice.py), voice card in
   [`docs/CADENCE_VOICE.md`](docs/CADENCE_VOICE.md)) is a warm fictional DJ. A
-  deterministic template voice is the always-available baseline; an optional Gemini
-  renderer writes only the warm *framing* (it names no songs — the app does), and
-  anything that fails the grounding check falls back to the template. Cadence never
-  claims to have heard a track or to be human.
+  deterministic template voice is the always-available baseline; optional Gemini
+  selects one line from an exact, application-owned palette. It cannot write new
+  publishable prose or track facts. Any deviation falls back to the template.
 
 ```bash
 python -m src.main "clean chill beats for studying, no vocals"
@@ -268,18 +319,62 @@ python -m src.main "clean chill beats for studying, no vocals"
 ```
 🎧  You asked: "clean chill beats for studying, no vocals"
 
-Here is a wordless mix of clean, steady instrumental textures designed to keep
-your mind anchored through a long study session.
+Here's a thoughtfully chosen set for the moment you described.
 1. Cloudy Bookmark — Mosslight [lofi · chill] — a close match in feel
 2. Digital Raincoat — Future Polaroid [synthwave · chill] — a close match in feel
 3. No Horizon — Pale Current [ambient · chill] — a close match in feel
 ...
 [recommend]  ·  mode: gemini  ·  voice: generated  ·  diversified
 ```
+`voice: generated` is the legacy trace value for the model-selected path; the
+publishable sentence itself must be copied from the approved palette.
 
 Add `--trace` to print the full `AgentTrace`. With no key, Cadence still replies
 in the deterministic voice (`voice: template`), and sensitive queries always do —
 they reach neither the retrieval nor the language provider.
+
+### The flagship listening room (Phase 4)
+
+[`streamlit_app.py`](streamlit_app.py) is the product-facing interface. It is a
+thin layer over `MusicCompanion`, so clicking a control cannot bypass the guard,
+retriever, fusion step, MMR quality floor, evaluator, or output contracts.
+
+The UI includes:
+
+- evidence-first recommendation cards with semantic, keyword, structured, and
+  final ranking signals (`N/A` remains distinct from an evaluated `0.0`);
+- truthful local lexical / cached semantic / live semantic / degraded badges;
+- a backend-enforced **Local-only** policy that blocks both provider paths;
+- interpreted-intent badges and context-guide provenance;
+- quick refinements and a transactional Taste Console for soft preferences,
+  hard filters, tempo, and Focused/Balanced/Exploratory MMR diversity;
+- guarded free-text follow-ups, sticky sensitive routing, controlled change
+  summaries, track set-diffs, exact undo, and reset;
+- graceful recommend, clarify, no-match, safe-response, and outage states; and
+- a developer view with the request-local receipt, bounded-agent trace,
+  candidate/final IDs, latency, fingerprints, network use, and source—not the
+  prompt or a shared log.
+
+Cadence deliberately does **not** encode prompts in URLs, make a provider call
+when a widget merely reruns, claim that MMR measures familiarity, or show a fake
+ablation from incomplete evidence. The full reasoning and beginner-oriented
+walkthrough are in [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md).
+
+```bash
+streamlit run streamlit_app.py
+```
+
+Then try these in the listening room:
+
+```text
+clean chill beats for studying, no vocals
+some jazz please
+my email is alice@example.com, find me melancholy piano
+```
+
+The third input demonstrates the privacy path: the address is removed, the turn
+and every later refinement stay provider-free, and no raw address appears in the
+cards, history, receipt, trace, or URL.
 
 ### Original scoring diagram
 
@@ -338,14 +433,14 @@ Two Mermaid sources, kept separate on purpose:
 - **[`diagrams/architecture.mmd`](diagrams/architecture.mmd)** — *only what is
   implemented and tested today* (the authoritative artifact).
 - **[`diagrams/roadmap.mmd`](diagrams/roadmap.mmd)** — the target/planned end state
-  (UI, session memory, logging, evaluation report, structured ranking).
+  beyond the current UI (real-data ingestion, evaluated personalization, launch
+  hardening, and optional structured-provider intent).
 
-The [PNG preview](assets/architecture.png) is a convenience export that can **lag
-the source**; regenerate from the current `.mmd` (Mermaid Live Editor at
-mermaid.live, or `mmdc -i diagrams/architecture.mmd -o assets/architecture.png`)
-before submission.
-
-![AI Music Companion — implemented architecture](assets/architecture.png)
+The Mermaid source is the submission artifact and authority. The older PNG export
+is intentionally not embedded because it predates Phase 4. Regenerate it from the
+current `.mmd` (Mermaid Live Editor at mermaid.live, or
+`mmdc -i diagrams/architecture.mmd -o assets/architecture.png`) before using it
+as a presentation image.
 
 ### Potential biases and risks
 
@@ -392,13 +487,23 @@ before submission.
    pip install -r requirements.txt
    ```
 
-3. Run the app:
+3. Run the flagship web app:
 
    ```bash
-   python3 -m src.main
+   streamlit run streamlit_app.py
    ```
 
-4. Try retrieval (Features 3 / 3b / 4) — no API key or network needed:
+   Open the printed local URL. The app starts in local-only mode and needs no
+   provider key. `requirements.txt` is also the deployment file read by
+   Streamlit Community Cloud.
+
+4. Run the CLI (the same engine, without the web presentation):
+
+   ```bash
+   python3 -m src.main "clean chill beats for studying, no vocals"
+   ```
+
+5. Try the retrieval-specific demonstration — no API key or network needed:
 
    ```bash
    python3 scripts/retrieval_demo.py "music to concentrate"
@@ -407,15 +512,21 @@ before submission.
    Retrieval needs no dependencies beyond the standard library. Without an
    embedding cache the semantic panel honestly degrades to TF-IDF.
 
-5. *(Optional)* Enable the real semantic path with a Gemini key (no extra
-   packages — the embedder uses only the standard library):
+6. *(Optional)* Enable live semantic queries and model-selected Cadence microcopy
+   with a Gemini key (the provider adapters use the standard library):
 
    ```bash
    cp .env.example .env            # then paste your key into .env (git-ignored)
    python3 scripts/build_embeddings.py   # writes data/embeddings/, then commit it
    ```
 
-   The key is read only from `.env`; never commit it or paste it into chat.
+   The key is read only from `.env`, the environment, or Streamlit secrets;
+   never commit it or paste it into chat. Local-only and sensitive routing still
+   block provider calls even when a key is configured.
+
+For a lean CLI/evaluator installation without Streamlit, use
+`requirements-core.txt`. `requirements-ui.txt` is a convenience alias to the
+complete root environment.
 
 ### Running Tests
 
@@ -425,7 +536,7 @@ Run all tests with:
 python3 -m pytest
 ```
 
-The current suite contains 157 tests covering the original scorer, validated
+The current suite contains 224 tests covering the original scorer, validated
 contracts, compatibility, normalization, malformed input, 200-track balance,
 legacy preservation, retrieval-metadata integrity, schema drift, new-genre
 service behavior, non-mutation, TF-IDF retrieval relevance, provenance, hard
@@ -453,7 +564,13 @@ query text); and — new in the structured-preference hybrid — directional num
 cues (`prefer_high`/`near`/`at_least`/…) parsed with controlled cue-ids, the
 direction-aware structured scorer, percentile-rank fusion of the text and
 structured legs (calibrated to 0.4/0.6 against the report card), mood-based MMR
-diversity that honors an explicit genre, and the absolute genre-satisfaction gate.
+diversity that honors an explicit genre, and the absolute genre-satisfaction
+gate; and — new in Phase 4 — typed refinement patches, explicit execution and
+diversity policy, request-local receipts, cached/live/local provenance,
+provider-free enforcement, sticky sensitivity, reversible Streamlit session
+state, all bounded action states, transactional controls, UI/backend ID parity,
+and AppTest coverage of normal, privacy, outage, refinement, undo, and developer
+flows.
 Every test runs fully offline (no key).
 
 ---
@@ -553,7 +670,7 @@ BEFORE - original numeric scorer
 THEN - TF-IDF over the catalog alone  (mode: local, index 5dc9493a2e80)
   (no lexical overlap with the catalog - retriever reports no signal)
 
-NOW - + curated context guides (query expansion)  (mode: local, index 5dc9493a2e80)
+NOW - + versioned context guides (query expansion)  (mode: local, index 5dc9493a2e80)
   guide fired: 'Studying and Focus'  (score 0.126)  expanded query with: focus, best, gentle, piano
   # 29  Margin Doodles             [lofi     ] similarity 0.220
         source=catalog:29  matched: gentle, focus, piano
@@ -692,10 +809,10 @@ case-insensitive matching) fixes the ranking-level failures:
   out-of-range values, booleans disguised as numbers, NaN, and infinity before
   the scorer runs. Tempo is now scored.
 
-- **The empty-profile half of Finding 4 is gone.** The public contract requires
-  at least one real preference. An unknown but syntactically valid all-miss
-  genre can still return zero-score ID order; the planned situation policy will
-  turn that into an explicit no-match or clarification response.
+- **The empty-profile half of Finding 4 is gone.** The structured public contract
+  requires at least one real preference. On the natural-language path, the
+  bounded situation policy now returns clarification or explicit no-match rather
+  than presenting unsupported zero-score filler as relevant.
 
 ---
 
@@ -723,9 +840,14 @@ case-insensitive matching) fixes the ranking-level failures:
   text and query text to Google's Gemini API. Under the free-tier terms, that
   content may be used to improve products and reviewed by humans, so no secrets
   or personal data should be embedded. The app runs fully locally without a key.
-- The companion behavior, the input/privacy guard, and grounded output evaluation
-  are implemented (deterministic, offline-safe). Still ahead: session memory, a
-  Streamlit UI, privacy-safe logging, and the evaluation harness.
+- The UI keeps guarded query text and reversible snapshots in one Streamlit
+  session so refinement and undo work. It does not persist them to UI logs or
+  URLs, but a hosted deployment still receives the request at its app server;
+  local-only specifically means **no onward AI-provider call**.
+- The interface has no playback, accounts, durable taste profile, collaborative
+  filtering, or commercial catalog. Feedback is session-only presentation data
+  and does not yet alter ranking. Real-data ingestion and evaluated
+  personalization remain future work.
 
 See the [Model Card](model_card.md), [Catalog Data Card](docs/CATALOG_DATA_CARD.md),
 and [Project Handbook](docs/PROJECT_HANDBOOK.md) for deeper analysis.
@@ -747,3 +869,12 @@ numeric labels objective. Future retrieval could amplify those authored
 assumptions. That is why the data card separates automated integrity checks from
 pending human review, and why the final evaluator must check provenance and hard
 constraints rather than trusting fluent AI output.
+
+---
+
+## License
+
+Source code is licensed **MIT** — see [`LICENSE`](LICENSE). The bundled data (the
+fictional catalog, context guides, and derived embedding cache) and any future
+real datasets are governed separately; see
+[docs/LICENSING.md](docs/LICENSING.md).

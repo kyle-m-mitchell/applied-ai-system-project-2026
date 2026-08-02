@@ -2,9 +2,9 @@
 
 ## Code
 
-Recommended license: **MIT** (permissive, standard for a student/portfolio
-project). *The project owner should add a top-level `LICENSE` file of their choice
-before publishing* — this note records intent, not a granted license.
+The source code is licensed **MIT** — see the top-level [`LICENSE`](../LICENSE)
+(permissive, standard for a student/portfolio project). The MIT grant covers code
+only; the data notices below govern the bundled and future datasets.
 
 ## Data
 

@@ -17,6 +17,7 @@ from pathlib import Path
 from src.contracts import (
     CompanionEvent,
     CompanionResponse,
+    DiversityLevel,
     GuardCategory,
     RankedCandidate,
 )
@@ -69,6 +70,8 @@ def build_event(
     candidate_ids: Sequence[int],
     latency_ms: float,
     config_fingerprint: str | None = None,
+    force_local: bool = False,
+    diversity: DiversityLevel = DiversityLevel.BALANCED,
 ) -> CompanionEvent:
     """Assemble a privacy-safe receipt from a finished response.
 
@@ -91,6 +94,10 @@ def build_event(
         intent_summary=trace.intent_summary if trace else "",
         operating_mode=retrieval.operating_mode if retrieval else None,
         voice_source=trace.voice_source if trace else None,
+        embedding_source=retrieval.embedding_source if retrieval else None,
+        network_used=trace.network_used if trace else False,
+        force_local=force_local,
+        diversity=diversity,
         candidate_ids=tuple(candidate_ids),
         final_ids=final_ids,
         components=stripped,
