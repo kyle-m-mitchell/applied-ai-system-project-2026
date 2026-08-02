@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.evaluation import build_companion, evaluate, render_markdown, run_case
+from src.evaluation import build_scenario_companion, evaluate, render_markdown, run_case
 from src.recommender import load_songs
 from src.retrieval import load_context_guides
 from src.service import RecommendationService
@@ -50,7 +50,7 @@ def test_results_never_contain_raw_query_text(catalog, guides):
 
 
 def test_known_case_outcomes(catalog, guides):
-    companion = build_companion("local_tfidf", catalog, guides)
+    companion = build_scenario_companion("local_tfidf", catalog, guides)
     gibberish = run_case(companion, _case("gibberish_no_match"), "local_tfidf")
     assert gibberish["action"] == "no_match" and gibberish["passed"]
     lofi = run_case(companion, _case("clean_instrumental_lofi"), "local_tfidf")
@@ -59,7 +59,7 @@ def test_known_case_outcomes(catalog, guides):
 
 
 def test_embedding_outage_degrades_and_still_passes(catalog, guides):
-    companion = build_companion("embedding_outage", catalog, guides)
+    companion = build_scenario_companion("embedding_outage", catalog, guides)
     result = run_case(companion, _case("jazz"), "embedding_outage")
     assert result["operating_mode"] == "degraded"  # fallback engaged
     assert result["passed"]  # a degraded recommend satisfies a recommend expectation
@@ -68,7 +68,7 @@ def test_embedding_outage_degrades_and_still_passes(catalog, guides):
 def test_fake_hybrid_is_graded_as_plumbing(catalog, guides):
     # Under fake_hybrid the gibberish case "recommends" noise; that must not fail,
     # because plumbing scenarios aren't graded on semantic quality.
-    companion = build_companion("fake_hybrid", catalog, guides)
+    companion = build_scenario_companion("fake_hybrid", catalog, guides)
     result = run_case(companion, _case("gibberish_no_match"), "fake_hybrid")
     assert result["passed"]
 

@@ -36,10 +36,10 @@ Last updated: **2026-07-30**
 | Item | Current state |
 |---|---|
 | Branch | `main`; the retrieval, guard/intent, and agent/Cadence work is committed. The current working tree holds the Step-1 stabilization fixes (cache resume, cache/cosine validation, query-key normalization, no raw-PII echo, tighter response/trace contracts, bounded retries, MMR relevance floor, docs). Inspect with `git status --short`. |
-| Feature | **Feature 6 (bounded agent + grounding evaluator + MMR diversity + Cadence's voice) implemented and tested; live voice validated against the real API. A Step-1 stabilization pass (from a code review) then hardened caches, contracts, retries, MMR, and docs. Human sign-off pending** |
-| Working tree | Uncommitted Step-1 stabilization fixes across `src/{embeddings,retrieval,contracts,voice,companion,generation,ranking,evaluator,main}.py`, `scripts/build_embeddings.py`, tests, and docs (see the Branch row) |
-| Last verified regression check | `115 passed` from `.venv/bin/python -m pytest -q` on 2026-07-31 (fully offline; no key) |
-| Implemented | Original scorer, contracts, service, 200-track catalog, catalog data card, TF-IDF + context-guide retrieval, Gemini embeddings + hybrid ranking (committed cache + fake + fallback), input/privacy guard + deterministic intent parser, **a bounded `MusicCompanion` agent with a privacy-safe trace, MMR diversity (relevance-floored), a grounding evaluator, and Cadence's voice (deterministic baseline + optional grounded generated renderer, output-guarded) — wired through the CLI**, full offline test suite, before/after demos, Mermaid architecture |
+| Feature | **Feature 7 (evaluation report card) and the scoring + observability foundation implemented and tested: shared feature utilities (with the unknown-genre `None == None` family fix), the unified `RankedCandidate` score breakdown (`None` = not evaluated vs `0.0` = evaluated-no-match), the public `build_companion` factory, and the privacy-safe event receipt. Features 1–6 remain in place. Human sign-off pending** |
+| Working tree | Uncommitted scoring + observability foundation: new `src/{features,scoring,observability,factory}.py`; `RankedCandidate`/`ScoreComponents`/`CompanionEvent` contracts; the unknown-genre MMR fix; public retriever seams (`lexical_scores`, `embed_query`, `vector_for`, `content_hashes`); an opt-in `--log` receipt; and their tests. Inspect with `git status --short` |
+| Last verified regression check | `139 passed` from `.venv/bin/python -m pytest -q` on 2026-08-01 (fully offline; no key) |
+| Implemented | Original scorer, contracts, service, 200-track catalog, catalog data card, TF-IDF + context-guide retrieval, Gemini embeddings + hybrid ranking (committed cache + fake + fallback), input/privacy guard + deterministic intent parser, a bounded `MusicCompanion` agent with a privacy-safe trace, MMR diversity (relevance-floored), a grounding evaluator, and Cadence's voice (deterministic baseline + optional grounded generated renderer, output-guarded) — wired through the CLI, **the evaluation report card (labeled cases + scenario matrix + pass/fail gate), and the scoring + observability foundation (shared feature utilities, unified `RankedCandidate`, public `build_companion` factory, privacy-safe JSONL event receipt)**, full offline test suite, before/after demos, Mermaid architecture |
 | In progress | Human review of catalog records, AI-drafted context-guide wording, and the `ai_interactions.md`/voice-card drafts |
 | Not implemented yet | Gemini structured intent; evaluation harness (Feature 7); session feedback + web UI (Feature 8); privacy-safe JSONL logging + presentation (Feature 9) |
 | Next action | Feature 7 (evaluation harness — build before the UI), then Feature 8 (session feedback + stdlib web UI); optional Gemini structured-intent parser; complete human sign-off |
@@ -569,7 +569,7 @@ returns a useful labeled result.
 - [x] Cadence voice (`src/voice.py` + `docs/CADENCE_VOICE.md`): deterministic baseline + optional grounded Gemini renderer that names no songs and passes the grounding check, degrading to the template voice on failure/no-key.
 - [x] Provider text via stdlib REST (`src/generation.py`, `gemini-flash-lite-latest`); sensitive input reaches **neither** the retrieval nor the language provider.
 - [x] Live voice validated: `python -m src.main "clean chill beats for studying, no vocals"` → a grounded Cadence framing + diverse set, `mode: gemini`, `voice: generated`; a PII query → `mode: local`, `voice: template`.
-- [x] `tests/test_{ranking,evaluator,voice}.py` + companion trace tests pass; full suite `115 passed` (2026-07-31, after the Step-1 stabilization pass), fully offline.
+- [x] `tests/test_{ranking,evaluator,voice}.py` + companion trace tests pass; full suite `139 passed` (2026-08-01, after the evaluation harness and the scoring + observability foundation), fully offline.
 - [x] `ai_interactions.md` drafted (SF8 agentic workflow + SF10 Strategy/Factory pattern).
 
 The 55/35/10 hybrid with the numeric scorer + session feedback remains partial:
@@ -863,23 +863,32 @@ honest.
 
 ## Next action
 
-The full local + provider stack is built and tested offline (`115 passed`):
+The full local + provider stack is built and tested offline (`139 passed`):
 retrieval (TF-IDF + context guides), embeddings + hybrid ranking, the
 natural-language guard + intent parser, and the bounded `MusicCompanion` agent —
 MMR diversity, grounding evaluator, and Cadence's voice (deterministic + grounded
-Gemini), wired through the CLI (Feature 6), then hardened by a Step-1 stabilization
-pass. Next, in order:
+Gemini), wired through the CLI (Feature 6). On top of that: **Feature 7 — the
+evaluation report card** (labeled cases across a scenario matrix, a pass/fail
+gate, and results that never store query text), and **the scoring + observability
+foundation** (shared feature utilities, the unified `RankedCandidate` breakdown,
+the public `build_companion` factory, and the privacy-safe JSONL event receipt).
 
-1. **Feature 7 — evaluation harness.** Golden cases across
-   normal/edge/adversarial/missing-context/outage through the same public path,
-   with a pass/fail summary; provider calls faked so it runs offline. Built
-   **before** the UI so quality is measured, not hidden behind polish.
-2. **Feature 8 — session feedback + stdlib web UI.** A clickable companion (chat
-   input, recommendation cards, evidence, operating-mode/voice badges,
-   like/dislike, visible "reset memory"); feedback nudges a later ranking within
-   the session. Built with Streamlit (supports Python 3.10–3.14; AppTest + free Community Cloud).
-3. **Feature 9 — privacy-safe logging, evidence, and presentation.**
-4. **Optional:** a Gemini structured-intent parser behind `IntentParser.parse`.
+Next, in order (adopted from the review roadmap; "measure before expanding"):
+
+1. **Structured-preference hybrid.** Feed the parser's genre/mood/numeric
+   preferences into the trusted scorer as a structured retrieval leg — typed
+   preferences with a *direction* (`prefer_high`/`near`/`at_least`/…), hard
+   constraints kept distinct from soft preferences, combined by rank/percentile
+   fusion (not a raw weighted sum), measured against the report card so the gain
+   is proven on dev + holdout without weakening privacy, constraints, or fallback.
+2. **First product UI (Streamlit).** A thin UI over the existing companion
+   service (no logic duplicated): NL input, interpreted intent, refinement chips,
+   "Why this?", local/cached/live badges, and a local-only privacy control;
+   AppTest for UI flows. Streamlit supports Python 3.10–3.14; free Community Cloud.
+3. **Honest real catalog (catalog v2 + FMA).** A deterministic ETL with explicit
+   unit conversion, field-level provenance, and quarantine — no fabricated fields,
+   no missing-as-false, real-data quality measured against the fictional baseline.
+4. **Then:** session personalization, launch hardening, and (later) commercial work.
 5. **Human sign-off** remains outstanding — the catalog representative/outlier
    review, the AI-drafted context guides, and the `ai_interactions.md`/voice-card
    drafts.

@@ -1,6 +1,6 @@
 %% AI Music Companion — IMPLEMENTED architecture (what exists and is tested today).
-%% For the intended end state (planned UI, memory, logging, eval report, structured
-%% ranking), see diagrams/roadmap.mmd. Solid arrows = runtime/indexing data flow;
+%% For the intended end state (planned UI, session memory, structured ranking),
+%% see diagrams/roadmap.mmd. Solid arrows = runtime/indexing data flow;
 %% dotted arrows = dependency, testing, or provider capability.
 
 flowchart TB
@@ -50,13 +50,17 @@ flowchart TB
         GEMINI -. "AI capability" .-> APP
     end
 
-    subgraph RELIABILITY["Reliability and human review"]
+    subgraph RELIABILITY["Reliability, measurement, and human review"]
         direction LR
         TESTER(["Human tester"])
-        TESTS["pytest — 115 offline tests<br/>unit + integration, normal · edge · adversarial · outage"]
+        TESTS["pytest — 139 offline tests<br/>unit + integration, normal · edge · adversarial · outage"]
+        EVAL["Evaluation report card<br/>labeled cases · scenario matrix · pass/fail gate<br/>results never store query text"]
+        EVENTS[("Privacy-safe event receipt (opt-in JSONL)<br/>decisions · ids · scores · fingerprints<br/>never query text / prompts / persistent ids")]
 
         TESTER --> TESTS
         TESTS -. "exercises the same service" .-> APP
+        EVAL -. "runs the same public path" .-> APP
+        APP -. "one receipt per turn" .-> EVENTS
     end
 
     classDef human fill:#FFF2CC,stroke:#8A6D1D,stroke-width:2px,color:#2D2408;
@@ -71,6 +75,6 @@ flowchart TB
     class APP interface;
     class AGENT,RETRIEVER,VOICE,GEMINI ai;
     class RANKER,POLICY,FALLBACK,INDEX deterministic;
-    class SOURCES data;
+    class SOURCES,EVENTS data;
     class INPUT_GUARD,EVALUATOR,SAFE,OUTPUT_GUARD guard;
-    class TESTS test;
+    class TESTS,EVAL test;

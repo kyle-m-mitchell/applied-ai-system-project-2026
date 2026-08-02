@@ -15,6 +15,9 @@ venv/
 eval/results/latest.json
 eval/results/latest.md
 
+# Observability: opt-in privacy-safe event receipts are local-only
+logs/
+
 # OS files
 .DS_Store
 

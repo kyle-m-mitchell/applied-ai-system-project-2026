@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from src.contracts import CatalogTrack, RetrievalHit, SourceType
-from src.ranking import mmr_rerank
+from src.ranking import _similarity, mmr_rerank
 
 
 def _track(track_id: int, genre: str, mood: str) -> CatalogTrack:
@@ -68,6 +68,32 @@ def test_lambda_one_is_pure_relevance():
     ]
     out = mmr_rerank(hits, 2, lambda_=1.0)
     assert [hit.track.id for hit in out] == [1, 2]
+
+
+def test_unknown_genres_are_not_treated_as_the_same_family():
+    # Two genres outside GENRE_TO_FAMILY both map to family None. A bare
+    # `None == None` would wrongly read them as siblings (0.4) and let MMR
+    # suppress one for the other. Sharing no family, similarity must be 0.0.
+    assert _similarity(_track(1, "polka", "chill"), _track(2, "klezmer", "somber")) == 0.0
+    # sanity: a genuinely shared family (both "mellow") still reads as siblings
+    assert _similarity(_track(3, "lofi", "chill"), _track(4, "ambient", "calm")) == 0.4
+    # sanity: same genre is unchanged (exact 1.0 / same-genre-different-mood 0.7)
+    assert _similarity(_track(5, "polka", "chill"), _track(6, "polka", "chill")) == 1.0
+    assert _similarity(_track(7, "polka", "chill"), _track(8, "polka", "somber")) == 0.7
+
+
+def test_diversity_does_not_penalize_distinct_unknown_genres():
+    # Anchor is an unknown genre (polka). For the 2nd slot MMR chooses between
+    # another unknown genre (klezmer, higher relevance) and a known one (lofi).
+    # Before the fix, klezmer was wrongly penalized as polka's "sibling" (0.4)
+    # and lost to lofi -> [1, 3]. With no false penalty, klezmer wins -> [1, 2].
+    hits = [
+        _hit(1, "polka", "chill", 0.90),
+        _hit(2, "klezmer", "somber", 0.60),
+        _hit(3, "lofi", "calm", 0.55),
+    ]
+    ids = [hit.track.id for hit in mmr_rerank(hits, 2)]
+    assert ids == [1, 2]
 
 
 def test_deterministic_and_bounds():

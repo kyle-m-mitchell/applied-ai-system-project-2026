@@ -290,6 +290,11 @@ class TfidfRetriever(Retriever):
         """Identify this exact index: method, both sources' content, and settings."""
         return self._fingerprint
 
+    @property
+    def content_hashes(self) -> dict[int, str]:
+        """Per-track content hashes — a public, read-only seam for the hybrid retriever."""
+        return self._content_hashes
+
     def _compute_fingerprint(self) -> str:
         """Fingerprint everything that determines retrieval output.
 
@@ -366,7 +371,7 @@ class TfidfRetriever(Retriever):
             )
         return tuple(evidence), added
 
-    def _lexical_scores(
+    def lexical_scores(
         self,
         query: str,
         candidates: tuple[CatalogTrack, ...],
@@ -379,8 +384,9 @@ class TfidfRetriever(Retriever):
     ]:
         """Score candidates lexically, expanding via guides when they help.
 
-        Returns per-track scores and matched terms plus the guide evidence and
-        expansion terms, so both ``search`` and the hybrid retriever can reuse it.
+        Public seam: returns per-track scores and matched terms plus the guide
+        evidence and expansion terms, so both ``search`` and the hybrid retriever
+        reuse one implementation instead of reaching into a private method.
         """
         query_tokens = _tokenize(query)
 
@@ -427,7 +433,7 @@ class TfidfRetriever(Retriever):
         candidates, filters_applied = _apply_hard_filters(
             self._tracks, instrumental_only, exclude_explicit
         )
-        scores, matched_terms, guides_used, expansion_terms = self._lexical_scores(
+        scores, matched_terms, guides_used, expansion_terms = self.lexical_scores(
             query, candidates, use_guides
         )
 
@@ -530,10 +536,24 @@ class EmbeddingRetriever(Retriever):
         """True when a valid, current cache backs semantic search."""
         return self._usable
 
-    def _embed_query(self, query: str) -> tuple[float, ...]:
-        """Embed the query once. The single retry lives in the provider adapter's
-        ``_post`` (retrying here as well would multiply attempts and delay)."""
+    @property
+    def content_hashes(self) -> dict[int, str]:
+        """Per-track content hashes — a public, read-only seam for the hybrid retriever."""
+        return self._content_hashes
+
+    def embed_query(self, query: str) -> tuple[float, ...]:
+        """Embed the query once (public seam). The single retry lives in the provider
+        adapter's ``_post`` — retrying here as well would multiply attempts and delay."""
         return self._embedder.embed_query(query)
+
+    def vector_for(self, track_id: int) -> tuple[float, ...] | None:
+        """Return a track's cached embedding, or ``None`` if absent/uncached.
+
+        A public accessor so the hybrid retriever never reaches into ``_cache``.
+        """
+        if self._cache is None:
+            return None
+        return self._cache.vectors.get(track_id)
 
     def _degraded(
         self, query: str, k: int, instrumental_only: bool, exclude_explicit: bool
@@ -557,7 +577,7 @@ class EmbeddingRetriever(Retriever):
         if not self._usable:
             return self._degraded(query, k, instrumental_only, exclude_explicit)
         try:
-            query_vector = self._embed_query(query)
+            query_vector = self.embed_query(query)
         except Exception:  # noqa: BLE001 - provider failed; degrade honestly
             return self._degraded(query, k, instrumental_only, exclude_explicit)
 
@@ -566,7 +586,7 @@ class EmbeddingRetriever(Retriever):
         )
         scored: list[tuple[int, float]] = []
         for track in candidates:
-            vector = self._cache.vectors.get(track.id)
+            vector = self.vector_for(track.id)
             if vector is None:
                 continue
             similarity = cosine(query_vector, vector)
@@ -624,7 +644,7 @@ class HybridRetriever(Retriever):
         self._embedding = EmbeddingRetriever(
             self._tracks, embedder, cache, fallback=self._tfidf
         )
-        self._content_hashes = self._tfidf._content_hashes
+        self._content_hashes = self._tfidf.content_hashes
         self._fingerprint = hashlib.sha256(
             (
                 f"hybrid:{w_semantic},{w_lexical}"
@@ -669,20 +689,20 @@ class HybridRetriever(Retriever):
         if not self._embedding.usable:
             return self._degraded(query, k, instrumental_only, exclude_explicit, use_guides)
         try:
-            query_vector = self._embedding._embed_query(query)
+            query_vector = self._embedding.embed_query(query)
         except Exception:  # noqa: BLE001 - provider failed; degrade to lexical
             return self._degraded(query, k, instrumental_only, exclude_explicit, use_guides)
 
         candidates, filters_applied = _apply_hard_filters(
             self._tracks, instrumental_only, exclude_explicit
         )
-        lexical_scores, matched_terms, guides_used, expansion_terms = self._tfidf._lexical_scores(
+        lexical_scores, matched_terms, guides_used, expansion_terms = self._tfidf.lexical_scores(
             query, candidates, use_guides
         )
 
         blended: list[tuple[int, float, float, float, tuple[str, ...]]] = []
         for track in candidates:
-            vector = self._embedding._cache.vectors.get(track.id)
+            vector = self._embedding.vector_for(track.id)
             semantic = min(1.0, max(0.0, cosine(query_vector, vector))) if vector else 0.0
             lexical = lexical_scores.get(track.id, 0.0)
             score = self._w_semantic * semantic + self._w_lexical * lexical

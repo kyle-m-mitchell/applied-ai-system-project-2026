@@ -2,9 +2,10 @@
 %% This is the intended end state. For what actually exists today, see
 %% diagrams/architecture.mmd. Solid arrows = runtime/indexing data flow;
 %% dotted arrows = dependency, testing, or observability.
-%% Still planned here: Streamlit UI, session-only memory + feedback, privacy-safe
-%% JSONL logs, the evaluation report, structured-preference ranking, and a
-%% provider structured-intent parser.
+%% Still planned here: Streamlit UI, session-only memory + feedback,
+%% structured-preference ranking, and a provider structured-intent parser.
+%% (The evaluation report card and the privacy-safe JSONL receipt now exist —
+%% see diagrams/architecture.mmd.)
 
 flowchart TB
     subgraph RUNTIME["Runtime request and response"]
@@ -58,9 +59,9 @@ flowchart TB
     subgraph RELIABILITY["Reliability, evaluation, and human review"]
         direction LR
         TESTER(["Human tester"])
-        TESTS["pytest + evaluation harness (harness PLANNED)<br/>golden normal · edge · adversarial · outage cases"]
-        REPORT[("Evaluation report (PLANNED)<br/>quality metrics + pass/fail gates")]
-        LOGS[("Privacy-safe JSONL logs (PLANNED)<br/>ids · scores · modes · outcomes — never raw text")]
+        TESTS["pytest + evaluation harness (offline)<br/>labeled normal · edge · adversarial · outage cases"]
+        REPORT[("Evaluation report card<br/>quality metrics + pass/fail gate")]
+        LOGS[("Privacy-safe JSONL receipt (opt-in)<br/>ids · scores · modes · fingerprints — never query text")]
 
         TESTER --> TESTS
         TESTS -. "exercises the same service" .-> APP

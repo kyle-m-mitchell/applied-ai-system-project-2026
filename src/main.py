@@ -28,8 +28,8 @@ from src.contracts import (  # noqa: E402
     RecommendationRequest,
     RecommendationResult,
 )
+from src.factory import CompanionConfig, CompanionDeps, build_companion  # noqa: E402
 from src.recommender import load_songs  # noqa: E402
-from src.retrieval import build_default_retriever, load_context_guides  # noqa: E402
 from src.service import RecommendationService  # noqa: E402
 
 
@@ -37,6 +37,7 @@ CATALOG_PATH = REPO_ROOT / "data" / "songs.csv"
 GUIDES_DIR = REPO_ROOT / "data" / "context_guides"
 CATALOG_CACHE = REPO_ROOT / "data" / "embeddings" / "catalog.json"
 QUERY_CACHE = REPO_ROOT / "data" / "embeddings" / "queries.json"
+EVENT_LOG = REPO_ROOT / "logs" / "events.jsonl"
 DIVIDER = "-" * 64
 
 
@@ -103,17 +104,25 @@ def _text_generator():
         return None
 
 
-def _build_companion(catalog, guides) -> MusicCompanion:
-    default = build_default_retriever(
-        catalog,
-        guides,
+def _build_companion(*, log_events: bool = False) -> MusicCompanion:
+    """Build the CLI's companion through the shared factory — one construction path.
+
+    Live provider objects are supplied as deps (``None`` without a key); the
+    config's toggles decide whether they're used, so the config fingerprint the
+    receipt records always reflects what actually ran.
+    """
+    _load_dotenv()
+    config = CompanionConfig(
+        catalog_path=str(CATALOG_PATH),
+        guides_dir=str(GUIDES_DIR),
         catalog_cache_path=str(CATALOG_CACHE),
         query_cache_path=str(QUERY_CACHE),
-        live_embedder=_live_embedder(),
+        use_live_embedder=True,
+        use_generator=True,
+        event_log_path=str(EVENT_LOG) if log_events else None,
     )
-    return MusicCompanion(
-        catalog, guides, default_retriever=default, generator=_text_generator()
-    )
+    deps = CompanionDeps(live_embedder=_live_embedder(), generator=_text_generator())
+    return build_companion(config, deps)
 
 
 def print_companion_response(
@@ -166,14 +175,13 @@ def run_structured_demo() -> None:
 
 
 def main() -> None:
-    args = [arg for arg in sys.argv[1:] if arg != "--trace"]
+    flags = {"--trace", "--log"}
+    args = [arg for arg in sys.argv[1:] if arg not in flags]
     show_trace = "--trace" in sys.argv[1:]
+    log_events = "--log" in sys.argv[1:]  # opt-in privacy-safe receipt (see logs/events.jsonl)
     if args:
-        _load_dotenv()
         query = " ".join(args)
-        catalog = RecommendationService(load_songs(str(CATALOG_PATH))).catalog
-        guides = load_context_guides(str(GUIDES_DIR))
-        companion = _build_companion(catalog, guides)
+        companion = _build_companion(log_events=log_events)
         print_companion_response(companion.respond(query), show_trace=show_trace)
     else:
         run_structured_demo()

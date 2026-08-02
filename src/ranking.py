@@ -11,16 +11,22 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from src.contracts import CatalogTrack, RetrievalHit
+from src.features import same_family
 from src.recommender import GENRE_TO_FAMILY
 
 
 def _similarity(a: CatalogTrack, b: CatalogTrack) -> float:
-    """Cheap 0-1 track similarity: same genre+mood > same genre > same family."""
-    if a.genre == b.genre and a.mood == b.mood:
-        return 1.0
+    """Cheap 0-1 track similarity: same genre+mood > same genre > same family.
+
+    Genres outside the known families (real-catalog genres we haven't mapped)
+    both look up to ``None``, and ``None == None`` is True — which once let MMR
+    treat two *unrelated* unknown genres as siblings (0.4) and suppress one for
+    the other. ``same_family`` carries the shared guard, so this and the legacy
+    scorer can never disagree about what "same family" means.
+    """
     if a.genre == b.genre:
-        return 0.7
-    if GENRE_TO_FAMILY.get(a.genre) == GENRE_TO_FAMILY.get(b.genre):
+        return 1.0 if a.mood == b.mood else 0.7
+    if same_family(a.genre, b.genre, GENRE_TO_FAMILY):
         return 0.4
     return 0.0
 

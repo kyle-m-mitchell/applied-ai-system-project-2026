@@ -289,6 +289,47 @@ class RetrievalResult(ContractModel):
     operating_mode: OperatingMode = OperatingMode.LOCAL
 
 
+class ScoreComponents(ContractModel):
+    """The per-signal scores behind one ranked candidate.
+
+    Each signal is ``float | None`` with a deliberate distinction the coming
+    structured-preference leg must inherit intact:
+
+    * ``None`` = **not evaluated** — this signal did not run for this query;
+    * ``0.0``  = **evaluated, no match** — it ran and found nothing.
+
+    Collapsing the two would make "we didn't look" indistinguishable from "we
+    looked and it's a miss", silently biasing any fusion that averages them.
+    ``fused`` is the single number the ranking actually ordered by, and
+    ``fusion_version`` names exactly how it was produced, so a score stays
+    reproducible and comparable across runs.
+    """
+
+    semantic: float | None = Field(default=None, ge=0.0, le=1.0)
+    lexical: float | None = Field(default=None, ge=0.0, le=1.0)
+    categorical: float | None = Field(default=None, ge=0.0, le=1.0)
+    numeric: float | None = Field(default=None, ge=0.0, le=1.0)
+    personalization: float | None = Field(default=None, ge=0.0, le=1.0)
+    fused: float = Field(ge=0.0, le=1.0)
+    available_signals: tuple[str, ...] = ()
+    fusion_version: str = Field(min_length=1)
+    reasons: tuple[str, ...] = ()
+
+
+class RankedCandidate(ContractModel):
+    """One track as ranked, with its full score breakdown and provenance.
+
+    A single, retriever-agnostic view: the local scorer, the hybrid retriever,
+    and the coming structured leg all describe a result the same way, so the
+    evaluator, the UI, and the event log never have to special-case a source.
+    """
+
+    track: CatalogTrack
+    components: ScoreComponents
+    source_type: SourceType = SourceType.CATALOG
+    content_hash: str = Field(min_length=1)
+
+
 class GuardCategory(str, Enum):
     """How the input/privacy guard classified a raw natural-language query."""
 
@@ -402,3 +443,33 @@ class CompanionResponse(ContractModel):
             if self.retrieval is not None:
                 raise ValueError(f"{self.action.value} response must not include retrieval")
         return self
+
+
+class CompanionEvent(ContractModel):
+    """A privacy-safe receipt for one companion turn — decisions and ids, never words.
+
+    It records *what the system did*: the guard category, allowlisted intent
+    facets, which track ids were considered and returned, their scores, the
+    operating mode, timings, and fingerprints — so a run can be audited and
+    reproduced.
+
+    It deliberately omits *what the person said*: no raw or sanitized query, no
+    prompt, no persistent identifier. ``request_id`` is an ephemeral per-turn
+    correlation id, not an identity. A receipt, not a diary.
+    """
+
+    schema_version: str = "1"
+    request_id: str = Field(min_length=1)
+    timestamp: str = Field(min_length=1)
+    guard_category: GuardCategory
+    action: CompanionAction
+    intent_summary: str = ""  # allowlisted facets only (genre/mood/flags), never free text
+    operating_mode: OperatingMode | None = None
+    voice_source: VoiceSource | None = None
+    candidate_ids: tuple[int, ...] = ()
+    final_ids: tuple[int, ...] = ()
+    components: tuple[ScoreComponents, ...] = ()  # parallel to final_ids; reasons stripped
+    fallback_reason: str | None = None
+    latency_ms: float = Field(ge=0.0)
+    index_fingerprint: str | None = None
+    config_fingerprint: str | None = None

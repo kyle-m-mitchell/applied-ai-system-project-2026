@@ -2,6 +2,8 @@ import csv
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass, asdict
 
+from src.features import categorical_score, normalize_unit
+
 # --- Scoring configuration -------------------------------------------------
 # Weights control how much each feature can contribute to a song's score.
 #
@@ -66,8 +68,7 @@ NUMERIC_FEATURES = ("energy", "acousticness", "valence", "danceability")
 
 def _normalize_tempo(bpm: float) -> float:
     """Map a BPM value onto 0-1 over [TEMPO_MIN_BPM, TEMPO_MAX_BPM], clamped."""
-    span = TEMPO_MAX_BPM - TEMPO_MIN_BPM
-    return min(1.0, max(0.0, (bpm - TEMPO_MIN_BPM) / span))
+    return normalize_unit(bpm, TEMPO_MIN_BPM, TEMPO_MAX_BPM)
 
 
 @dataclass
@@ -229,20 +230,11 @@ def _category_score(pref_value: Optional[str], song_value: Optional[str],
                     mapping: Dict[str, str]) -> float:
     """Categorical match: 1.0 exact, 0.5 same family, 0.0 otherwise.
 
-    Matching is case/whitespace-insensitive so a user typing "Lofi" or " lofi "
-    still lines up with the catalog's "lofi" instead of silently scoring 0.
+    Thin wrapper over the shared :func:`src.features.categorical_score` so the
+    scorer, MMR diversity, and the structured leg share one definition of "same
+    family" (including the ``None == None`` family guard).
     """
-    if not pref_value or not song_value:
-        return 0.0
-    pref = pref_value.strip().lower()
-    song = song_value.strip().lower()
-    if pref == song:
-        return 1.0
-    pref_family = mapping.get(pref)
-    song_family = mapping.get(song)
-    if pref_family is not None and pref_family == song_family:
-        return 0.5
-    return 0.0
+    return categorical_score(pref_value, song_value, mapping)
 
 
 def _genre_score(pref_genre: Optional[str], song_genre: Optional[str]) -> float:

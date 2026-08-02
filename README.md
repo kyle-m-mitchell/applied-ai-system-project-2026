@@ -425,7 +425,7 @@ Run all tests with:
 python3 -m pytest
 ```
 
-The current suite contains 115 tests covering the original scorer, validated
+The current suite contains 139 tests covering the original scorer, validated
 contracts, compatibility, normalization, malformed input, 200-track balance,
 legacy preservation, retrieval-metadata integrity, schema drift, new-genre
 service behavior, non-mutation, TF-IDF retrieval relevance, provenance, hard
@@ -438,11 +438,18 @@ cache, semantic and hybrid retrieval, the exact blend math, honest `DEGRADED`
 fallback, and the query cache; and — new in Feature 5 — the input/privacy guard
 (PII/secret redaction, injection stripping, crisis → safe response), the
 deterministic intent parser, and the `MusicCompanion` (recommend / clarify /
-no-match / safe / sensitive-stays-local); and — new in Feature 6 — MMR diversity,
+no-match / safe / sensitive-stays-local); new in Feature 6 — MMR diversity,
 the grounding evaluator (ids, constraints, evidence, and invented-song detection),
 Cadence's voice (deterministic + a stubbed generator, with fallback on
-ungrounded/failed generation), and the privacy-safe agent trace. Every test runs
-fully offline (no key).
+ungrounded/failed generation), and the privacy-safe agent trace; new in Feature 7 —
+the evaluation report card (labeled cases, the scenario matrix, and the pass/fail
+gate, with results that never store query text); and — new in the scoring +
+observability foundation — the shared feature utilities (including the
+unknown-genre `None == None` family guard), the unified `RankedCandidate` score
+breakdown (where `None` = "not evaluated" and `0.0` = "evaluated, no match"), the
+public `build_companion` factory (which reproduces direct construction), and the
+privacy-safe event receipt (a JSONL log that carries decisions and ids but never
+query text). Every test runs fully offline (no key).
 
 ---
 

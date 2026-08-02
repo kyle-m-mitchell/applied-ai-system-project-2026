@@ -10,7 +10,9 @@ provider — and the trace records categories and ids, never raw sensitive text.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Sequence
+from uuid import uuid4
 
 from src.contracts import (
     AgentTrace,
@@ -28,8 +30,10 @@ from src.evaluator import GroundingEvaluator
 from src.generation import TextGenerator
 from src.guard import InputGuard
 from src.intent import IntentParser
+from src.observability import EventSink, NullEventSink, build_event
 from src.ranking import mmr_rerank
 from src.retrieval import Retriever, TfidfRetriever
+from src.scoring import candidates_from_hits
 from src.voice import CadenceVoice
 
 
@@ -51,6 +55,8 @@ class MusicCompanion:
         default_retriever: Retriever | None = None,
         local_retriever: Retriever | None = None,
         generator: TextGenerator | None = None,
+        event_sink: EventSink | None = None,
+        config_fingerprint: str | None = None,
     ) -> None:
         self._guard = InputGuard()
         self._parser = IntentParser()
@@ -62,27 +68,81 @@ class MusicCompanion:
             local_retriever if local_retriever is not None else TfidfRetriever(tracks, guides)
         )
         self._default = default_retriever if default_retriever is not None else self._local
+        self._events = event_sink if event_sink is not None else NullEventSink()
+        self._config_fingerprint = config_fingerprint
 
     def respond(self, text: str, *, limit: int = 5) -> CompanionResponse:
-        """Guard, parse, retrieve, diversify, evaluate, and voice one query."""
+        """Guard, parse, retrieve, diversify, evaluate, and voice one query.
+
+        A thin public wrapper: it times the turn, mints an ephemeral request id,
+        and emits one privacy-safe receipt to the event sink. The decision logic
+        lives in ``_respond``; emission never alters or blocks the response.
+        """
+        request_id = uuid4().hex
+        start = time.perf_counter()
+        response, candidate_ids = self._respond(text, limit=limit)
+        latency_ms = round((time.perf_counter() - start) * 1000, 3)
+        self._emit(request_id, response, candidate_ids, latency_ms)
+        return response
+
+    def _emit(
+        self,
+        request_id: str,
+        response: CompanionResponse,
+        candidate_ids: tuple[int, ...],
+        latency_ms: float,
+    ) -> None:
+        """Record one receipt, best-effort. Logging must never break a response."""
+        if isinstance(self._events, NullEventSink):
+            return  # no work when observability is off
+        try:
+            candidates = (
+                candidates_from_hits(response.retrieval.hits) if response.retrieval else ()
+            )
+            self._events.record(
+                build_event(
+                    request_id=request_id,
+                    response=response,
+                    candidates=candidates,
+                    candidate_ids=candidate_ids,
+                    latency_ms=latency_ms,
+                    config_fingerprint=self._config_fingerprint,
+                )
+            )
+        except Exception:  # noqa: BLE001 - observability is best-effort
+            pass
+
+    def _respond(
+        self, text: str, *, limit: int = 5
+    ) -> tuple[CompanionResponse, tuple[int, ...]]:
+        """Run the bounded flow, returning the response and the candidate-pool ids."""
         verdict = self._guard.inspect(text)
 
         if verdict.category is GuardCategory.HIGH_RISK:
-            return self._simple(verdict.category, CompanionAction.SAFE_RESPONSE, SAFE_RESPONSE_MESSAGE)
+            return (
+                self._simple(verdict.category, CompanionAction.SAFE_RESPONSE, SAFE_RESPONSE_MESSAGE),
+                (),
+            )
         if verdict.category in (GuardCategory.EMPTY, GuardCategory.TOO_LONG):
-            return self._simple(
-                verdict.category,
-                CompanionAction.CLARIFY,
-                "Tell me in a few words what you'd like to hear.",
+            return (
+                self._simple(
+                    verdict.category,
+                    CompanionAction.CLARIFY,
+                    "Tell me in a few words what you'd like to hear.",
+                ),
+                (),
             )
 
         intent = self._parser.parse(verdict.sanitized_query, limit=limit)
         if intent.needs_clarification:
-            return self._simple(
-                verdict.category,
-                CompanionAction.CLARIFY,
-                intent.clarification or "What would you like to hear?",
-                intent=intent,
+            return (
+                self._simple(
+                    verdict.category,
+                    CompanionAction.CLARIFY,
+                    intent.clarification or "What would you like to hear?",
+                    intent=intent,
+                ),
+                (),
             )
 
         # Retrieve a larger pool, then diversify down to the requested count.
@@ -94,6 +154,7 @@ class MusicCompanion:
             instrumental_only=intent.instrumental_only,
             exclude_explicit=intent.exclude_explicit,
         )
+        candidate_ids = tuple(hit.track.id for hit in pool.hits)
         diversified = mmr_rerank(pool.hits, intent.limit) if pool.hits else ()
         diversity_applied = len(pool.hits) > intent.limit
         result = pool.model_copy(update={"hits": diversified})
@@ -101,23 +162,26 @@ class MusicCompanion:
         evaluation = self._evaluator.evaluate_result(intent, diversified, self._valid_ids)
 
         if not diversified or not evaluation.ok:
-            return CompanionResponse(
-                action=CompanionAction.NO_MATCH,
-                message=(
-                    "I couldn't find a match I can stand behind for that. "
-                    "Try naming a genre, a mood, or an activity."
-                ),
-                retrieval=result,
-                intent=intent,
-                trace=AgentTrace(
-                    guard_category=verdict.category,
-                    intent_summary=self._intent_summary(intent),
-                    retrieved_ids=tuple(hit.track.id for hit in diversified),
-                    diversity_applied=diversity_applied,
-                    evaluation=evaluation,
+            return (
+                CompanionResponse(
                     action=CompanionAction.NO_MATCH,
-                    fallback_reason=None if diversified else "no candidates",
+                    message=(
+                        "I couldn't find a match I can stand behind for that. "
+                        "Try naming a genre, a mood, or an activity."
+                    ),
+                    retrieval=result,
+                    intent=intent,
+                    trace=AgentTrace(
+                        guard_category=verdict.category,
+                        intent_summary=self._intent_summary(intent),
+                        retrieved_ids=tuple(hit.track.id for hit in diversified),
+                        diversity_applied=diversity_applied,
+                        evaluation=evaluation,
+                        action=CompanionAction.NO_MATCH,
+                        fallback_reason=None if diversified else "no candidates",
+                    ),
                 ),
+                candidate_ids,
             )
 
         # Sensitive queries never reach the language provider either.
@@ -130,23 +194,26 @@ class MusicCompanion:
             if result.operating_mode is OperatingMode.DEGRADED
             else CompanionAction.RECOMMEND
         )
-        return CompanionResponse(
-            action=action,
-            message=message,
-            retrieval=result,
-            intent=intent,
-            trace=AgentTrace(
-                guard_category=verdict.category,
-                intent_summary=self._intent_summary(intent),
-                retrieved_ids=tuple(hit.track.id for hit in diversified),
-                diversity_applied=diversity_applied,
-                evaluation=evaluation,
-                text_evaluation=voice.text_evaluation,
+        return (
+            CompanionResponse(
                 action=action,
-                voice_source=voice.source,
-                voice_model=voice.model,
-                fallback_reason=voice.fallback_reason,
+                message=message,
+                retrieval=result,
+                intent=intent,
+                trace=AgentTrace(
+                    guard_category=verdict.category,
+                    intent_summary=self._intent_summary(intent),
+                    retrieved_ids=tuple(hit.track.id for hit in diversified),
+                    diversity_applied=diversity_applied,
+                    evaluation=evaluation,
+                    text_evaluation=voice.text_evaluation,
+                    action=action,
+                    voice_source=voice.source,
+                    voice_model=voice.model,
+                    fallback_reason=voice.fallback_reason,
+                ),
             ),
+            candidate_ids,
         )
 
     def _simple(

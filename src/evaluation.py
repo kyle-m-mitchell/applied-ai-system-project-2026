@@ -68,8 +68,13 @@ def _fake_cache(tracks: Sequence[CatalogTrack], embedder: FakeEmbedder) -> Embed
     )
 
 
-def build_companion(scenario: str, tracks, guides) -> MusicCompanion:
-    """Build a companion wired for one scenario (all offline, deterministic)."""
+def build_scenario_companion(scenario: str, tracks, guides) -> MusicCompanion:
+    """Build a companion wired for one eval scenario (all offline, deterministic).
+
+    Distinct from ``src.factory.build_companion``: that constructs the production
+    companion from config; this injects the deterministic outage/fake doubles a
+    scenario needs, so the two never share a name.
+    """
     if scenario == "local_tfidf":
         return MusicCompanion(tracks, guides)  # TF-IDF default, no generator
     if scenario == "fake_hybrid":
@@ -174,7 +179,9 @@ def _code_version() -> str:
 
 def evaluate(cases, tracks, guides, scenarios: Sequence[str] = OFFLINE_SCENARIOS) -> dict:
     """Run every case under every scenario and return an aggregated report."""
-    companions = {scenario: build_companion(scenario, tracks, guides) for scenario in scenarios}
+    companions = {
+        scenario: build_scenario_companion(scenario, tracks, guides) for scenario in scenarios
+    }
     valid_ids = {track.id for track in tracks}
     runs = [
         run_case(companions[scenario], case, scenario)
