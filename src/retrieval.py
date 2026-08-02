@@ -104,13 +104,33 @@ def _tokenize(text: str) -> list[str]:
 def build_document_text(track: CatalogTrack) -> str:
     """Assemble one canonical retrieval document from a track's descriptor fields."""
     parts: list[str] = []
-    for field in RETRIEVAL_FIELDS:
+    for field in document_fields_used(track):
         value = getattr(track, field)
         if isinstance(value, tuple):
             parts.append(" ".join(value))
         else:
             parts.append(str(value))
     return " ".join(parts)
+
+
+def document_fields_used(track: CatalogTrack) -> tuple[str, ...]:
+    """Return only descriptor fields that contributed real document content.
+
+    ``0.0`` and ``False`` would be real values in general, while ``None`` and an
+    empty collection mean absent evidence. The current descriptor list contains
+    text/collections, but the generic test keeps this rule safe if it grows.
+    """
+    used: list[str] = []
+    for field in RETRIEVAL_FIELDS:
+        value = getattr(track, field)
+        if value is None:
+            continue
+        if isinstance(value, (tuple, list, set, dict)) and not value:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        used.append(field)
+    return tuple(used)
 
 
 def load_context_guides(directory: str) -> list[ContextGuide]:
@@ -173,10 +193,10 @@ def _apply_hard_filters(
     candidates = tracks
     applied: list[str] = []
     if instrumental_only:
-        candidates = tuple(track for track in candidates if track.instrumental)
+        candidates = tuple(track for track in candidates if track.instrumental is True)
         applied.append("instrumental_only")
     if exclude_explicit:
-        candidates = tuple(track for track in candidates if not track.explicit)
+        candidates = tuple(track for track in candidates if track.explicit is False)
         applied.append("exclude_explicit")
     return candidates, tuple(applied)
 
@@ -446,9 +466,9 @@ class TfidfRetriever(Retriever):
         hits = tuple(
             RetrievalHit(
                 source_type=SourceType.CATALOG,
-                source_id=f"catalog:{track_id}",
+                source_id=self._tracks_by_id[track_id].ref.source_id,
                 content_hash=self._content_hashes[track_id],
-                fields_used=RETRIEVAL_FIELDS,
+                fields_used=document_fields_used(self._tracks_by_id[track_id]),
                 score=score,
                 matched_terms=matched_terms[track_id],
                 lexical_score=score,
@@ -639,9 +659,9 @@ class EmbeddingRetriever(Retriever):
         hits = tuple(
             RetrievalHit(
                 source_type=SourceType.CATALOG,
-                source_id=f"catalog:{track_id}",
+                source_id=self._tracks_by_id[track_id].ref.source_id,
                 content_hash=self._content_hashes[track_id],
-                fields_used=RETRIEVAL_FIELDS,
+                fields_used=document_fields_used(self._tracks_by_id[track_id]),
                 score=similarity,
                 semantic_score=similarity,
                 track=self._tracks_by_id[track_id],
@@ -779,9 +799,9 @@ class HybridRetriever(Retriever):
         hits = tuple(
             RetrievalHit(
                 source_type=SourceType.CATALOG,
-                source_id=f"catalog:{track_id}",
+                source_id=self._tracks_by_id[track_id].ref.source_id,
                 content_hash=self._content_hashes[track_id],
-                fields_used=RETRIEVAL_FIELDS,
+                fields_used=document_fields_used(self._tracks_by_id[track_id]),
                 score=min(1.0, score),
                 matched_terms=matched,
                 semantic_score=semantic,

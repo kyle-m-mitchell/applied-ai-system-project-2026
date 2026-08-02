@@ -1,91 +1,151 @@
-%% Cadence — IMPLEMENTED and tested architecture as of Phase 4.
-%% Solid arrows are runtime/indexing flow. Dotted arrows are testing,
-%% observability, provider capability, or human-review relationships.
+%% Cadence Phase 5 architecture.
+%% Solid arrows are product or build data flow. Dotted arrows are optional,
+%% evaluation, or human-governance paths. A built full release asset and promoted
+%% feature models remain evidence gates; the code does not invent those results.
 
 flowchart TB
-    subgraph EXPERIENCE["Listener experience — Streamlit or CLI"]
+    subgraph OFFLINE["Offline evidence build — never runs in the deployed app"]
         direction LR
-        LISTENER(["Listener"])
-        UI["Streamlit listening room<br/>search · intent/evidence cards · Taste Console<br/>follow-up · evolution · undo · developer view"]
-        CLI["CLI<br/>structured scorer or natural-language companion"]
-        SESSION[("Per-browser session state<br/>guarded intent · immutable snapshots<br/>controlled deltas · session-only rating")]
-        POLICY["Typed execution policy<br/>force_local · Focused/Balanced/Exploratory"]
-        RESULT(["Grounded set or bounded state<br/>recommend · clarify · no-match<br/>safe-response · degraded"])
+        FMAZIP[(Pinned official FMA metadata archive)]
+        INTEGRITY["SHA-256 check<br/>safe ZIP validation and extraction"]
+        PARSER["Explicit multi-row CSV parser<br/>Unicode and plain-text normalization<br/>safe lists, URLs, and NA policy"]
+        SCOPE["Scoped FMA records<br/>track information<br/>album information<br/>artist biography<br/>genres and scoped tags"]
+        LIBROSA[(518 Librosa-derived statistics)]
+        ECHONEST[(Echo Nest-computed overlap)]
+        TRAIN["Offline specialized models<br/>artist-group 70/15/15 split<br/>Dummy and Ridge baselines<br/>HGB point + q10/q90"]
+        ABSTAIN["Release and row gates<br/>MAE improvement<br/>interval coverage<br/>OOD and width abstention"]
+        MOOD["Experimental mood profile<br/>upbeat · calm · intense · somber<br/>margin below 0.10 = unlabeled"]
+        ETL["Evidence-first FMA ETL<br/>valid identity accepted<br/>malformed identity quarantined<br/>unknown remains unknown"]
+        FULL[(FMA Full SQLite<br/>all valid source records)]
+        LITE[(Committed FMA Lite SQLite<br/>300 deterministic Echo Nest rows)]
+        FTS["Normalized tables + FTS5<br/>fixed ordering and serialization"]
+        MANIFEST["Checksummed manifest<br/>counts · schema/ETL versions<br/>coverage · licenses · attribution"]
+        RELEASE[(Checksummed GitHub Release asset<br/>publication and measurements pending)]
 
-        LISTENER --> UI
-        LISTENER --> CLI
-        UI --> POLICY
-        UI <--> SESSION
-        UI --> RESULT
-        CLI --> RESULT
+        FMAZIP --> INTEGRITY --> PARSER --> SCOPE --> ETL
+        LIBROSA --> TRAIN
+        ECHONEST --> TRAIN
+        TRAIN --> ABSTAIN --> ETL
+        ECHONEST --> ETL
+        ETL --> MOOD --> FTS
+        ETL --> FTS
+        FTS --> FULL
+        FTS --> LITE
+        FULL --> MANIFEST
+        LITE --> MANIFEST
+        FULL -. "after measured release gate" .-> RELEASE
     end
 
-    subgraph PIPELINE["One shared MusicCompanion pipeline"]
+    subgraph PRODUCT["Listener request — one bounded MusicCompanion pipeline"]
         direction LR
-        GUARD["Input + privacy guard<br/>size · PII/secret redaction<br/>injection stripping · crisis route"]
-        AGENT["Bounded agent<br/>allowlisted actions · sticky guard category<br/>rule intent parser / validated IntentPatch"]
-        RETRIEVER["Retriever interface<br/>local TF-IDF + guides<br/>cached/live Gemini embeddings<br/>semantic + lexical hybrid"]
-        FUSION["Ranking<br/>hard filters → structured/text fusion<br/>→ MMR with fixed relevance floor"]
-        RESULT_EVAL["Result evaluator<br/>valid IDs · unique · constraints<br/>evidence · requested count"]
-        VOICE["Cadence voice<br/>deterministic baseline<br/>optional Gemini microcopy selection"]
-        FRAMING_GUARD["Framing output guard<br/>exact application-owned allowlist<br/>format + safety checks → template fallback"]
-        CONTRACTS["Output contracts<br/>CompanionResponse + AgentTrace<br/>request-local PipelineReceipt"]
-        SAFE["Fixed safe response<br/>no retrieval or provider call"]
-        FALLBACK["Provider-free / fallback path<br/>TF-IDF + deterministic voice<br/>labeled local or degraded"]
+        HUMAN([Listener])
+        SURFACE["Streamlit or CLI<br/>catalog-aware controls and cards"]
+        SESSION[(Per-browser session<br/>mix history · undo · ratings<br/>research cache)]
+        GUARD["Input and privacy guard<br/>validation · redaction<br/>injection and crisis routes"]
+        INTENT["Typed intent parser<br/>bounded action policy"]
+        CAPABILITY["Catalog capability validation<br/>clarify unsupported hard filters"]
+        CATALOG_ROUTE{"Catalog route"}
+        RESULT_EVAL["Grounding evaluator<br/>known IDs · uniqueness<br/>constraints · used evidence"]
+        VOICE["Evidence-bounded Cadence voice<br/>approved framing only"]
+        LOCAL_VOICE["Deterministic local generator<br/>provider-free fallback"]
+        RESPONSE(["Recommendation, clarification,<br/>no-match, safe, or degraded response"])
 
-        GUARD -->|"ordinary / sanitized"| AGENT
-        GUARD -->|"high risk"| SAFE
-        AGENT --> RETRIEVER
-        RETRIEVER --> FUSION
-        FUSION --> RESULT_EVAL
-        RESULT_EVAL -->|"grounded set"| VOICE
-        RESULT_EVAL -->|"empty / rejected"| CONTRACTS
-        VOICE --> FRAMING_GUARD
-        FRAMING_GUARD --> CONTRACTS
-        SAFE --> CONTRACTS
-        FALLBACK --> RETRIEVER
+        HUMAN --> SURFACE
+        SURFACE <--> SESSION
+        SURFACE --> GUARD --> INTENT --> CAPABILITY --> CATALOG_ROUTE
+        RESULT_EVAL --> VOICE --> RESPONSE --> SURFACE
+        LOCAL_VOICE --> VOICE
     end
 
-    POLICY --> AGENT
-    CLI --> GUARD
-    UI -->|"submitted transaction only"| GUARD
-    CONTRACTS --> UI
-    CONTRACTS --> CLI
-
-    subgraph EVIDENCE["Grounding data and optional provider"]
+    subgraph FMA_SERVE["FMA serving path — independent candidate legs"]
         direction LR
-        CURATOR(["Human catalog/guide review<br/>(pending before launch)"])
-        CATALOG[("Validated generated fictional catalog<br/>200 tracks · typed audio metadata")]
-        GUIDES[("AI-drafted context guides<br/>query expansion + cited evidence")]
-        INDEX["Immutable in-memory indexes<br/>TF-IDF + committed embedding cache<br/>content/config fingerprints"]
-        GEMINI["Optional Gemini adapters<br/>query embedding + approved-line selection<br/>bounded failure → local fallback"]
+        RESOLVER["Artifact resolver<br/>verified local Full → release cache<br/>→ verified bundled Lite"]
+        ROSQL[(Read-only, query-only SQLite)]
+        TEXT["FTS5 text retriever<br/>top 200<br/>scope-weighted evidence"]
+        STRUCT["Structured retriever<br/>top 200<br/>genre and trustworthy numeric axes"]
+        RRF["Weighted reciprocal-rank fusion<br/>union of both candidate sets"]
+        CONF["Confidence-aware scoring<br/>missing = no reward or penalty<br/>estimate weight follows confidence"]
+        MMR["MMR diversity<br/>unknown moods never match"]
 
-        CURATOR -. "review gate not yet completed" .-> CATALOG
-        CURATOR -. "review gate not yet completed" .-> GUIDES
-        CATALOG --> INDEX
-        GUIDES --> INDEX
-        INDEX --> RETRIEVER
-        GEMINI -. "live capability only when policy permits" .-> RETRIEVER
-        GEMINI -. "bounded selection only when policy permits" .-> VOICE
-        GEMINI -. "missing / blocked / failed" .-> FALLBACK
+        RESOLVER --> ROSQL
+        ROSQL --> TEXT
+        ROSQL --> STRUCT
+        TEXT --> RRF
+        STRUCT --> RRF
+        RRF --> CONF --> MMR --> RESULT_EVAL
     end
 
-    subgraph RELIABILITY["Reliability, evaluation, and human checking"]
+    subgraph FICTIONAL["Immutable regression-control path"]
         direction LR
-        TESTER(["Human tester / reviewer"])
-        TESTS["pytest — offline suite<br/>unit · integration · AppTest<br/>normal · edge · privacy · adversarial · outage"]
-        EVAL["Evaluation report card<br/>scenario matrix · pass/fail gate<br/>hard constraints 100% · genre satisfaction 0.863"]
-        EVENTS[("Optional privacy-safe JSONL events<br/>controlled facets · IDs · scores · modes<br/>never prompt text or persistent listener ID")]
-        DEV["UI developer receipt<br/>request-local IDs · latency · source<br/>network use · guard · fingerprints"]
+        FCAT[(200-track fictional catalog<br/>authored complete fields)]
+        GUIDES[(Versioned context guides)]
+        TFIDF["Existing TF-IDF and cached/live<br/>embedding hybrid"]
+        FRANK["Existing structured fusion and MMR<br/>ranking behavior preserved"]
+
+        FCAT --> TFIDF
+        GUIDES --> TFIDF
+        TFIDF --> FRANK --> RESULT_EVAL
+    end
+
+    CATALOG_ROUTE -->|FMA| RESOLVER
+    CATALOG_ROUTE -->|fictional| TFIDF
+    RELEASE -. "verified download only" .-> RESOLVER
+    LITE --> RESOLVER
+    FULL -. "verified local artifact" .-> RESOLVER
+
+    subgraph RESEARCH["Optional post-ranking research — cannot change the list"]
+        direction LR
+        RESEARCH_BUTTON(["Human selects Research this track"])
+        IDENTITY["MusicBrainz exact identity resolver<br/>title + artist only<br/>User-Agent and rate limit"]
+        GROUNDED["Optional Gemini grounded search<br/>resolved identity only"]
+        CITATION["Citation and content guard<br/>identity ambiguity · unsafe URL<br/>missing support · injection · size · timeout"]
+        BRIEF["At most three cited claims<br/>session-only ResearchBrief"]
+        LOCAL_SUMMARY["Deterministic local FMA summary"]
+
+        SURFACE -.-> RESEARCH_BUTTON --> IDENTITY
+        IDENTITY -->|one exact identity| GROUNDED --> CITATION
+        CITATION -->|all claims supported| BRIEF --> SURFACE
+        IDENTITY -->|none, ambiguous, or unavailable| LOCAL_SUMMARY
+        CITATION -->|reject or provider failure| LOCAL_SUMMARY --> SURFACE
+    end
+
+    subgraph HUMAN_GATE["Human calibration and isolated benchmark"]
+        direction LR
+        SAMPLE["Deterministic 300-track sample<br/>prediction fields removed"]
+        ANNOTATOR(["Local human annotator<br/>valence · arousal · quadrant · confidence"])
+        LABELS[(Local JSONL labels<br/>primary + independent audit)]
+        READINESS["Readiness report<br/>300 primary tracks<br/>60 independent audits"]
+        PROMOTION{"Human promotion gate<br/>minimum sample and agreement"}
+        EXPERIMENTAL["Manifest remains experimental"]
+        CALIBRATE["Future bounded calibration<br/>temperature or tag weight only"]
+        DEAM[(DEAM local input<br/>CC BY-NC)]
+        DEAM_TEST["Explicit non-commercial benchmark<br/>output restricted to eval/noncommercial"]
+
+        SCOPE -.-> SAMPLE --> ANNOTATOR --> LABELS --> READINESS --> PROMOTION
+        PROMOTION -->|not met| EXPERIMENTAL
+        PROMOTION -. "future: met and reviewed" .-> CALIBRATE
+        CALIBRATE -.-> MOOD
+        DEAM --> DEAM_TEST
+        DEAM_TEST -. "reports only; no production effect" .-> EXPERIMENTAL
+    end
+
+    subgraph RELIABILITY["Reliability, observability, and release checking"]
+        direction LR
+        TESTER([Human tester / reviewer])
+        TESTS["Offline pytest suite<br/>contracts · ETL · SQLite · resolver<br/>model gates · mood · research · UI"]
+        EVAL["Evaluation harness<br/>fictional control = 0.863<br/>FMA/provenance metrics pending artifacts"]
+        PERF["Measured release report<br/>determinism · checksums · p95 latency<br/>open time · memory · size · download"]
+        LOG[(Privacy-safe action trace<br/>steps and tool outcomes<br/>never hidden reasoning or prompt text)]
 
         TESTER --> TESTS
         TESTER --> EVAL
-        TESTS -. "same public services" .-> UI
-        TESTS -. "same public services" .-> CLI
-        EVAL -. "same MusicCompanion path" .-> AGENT
-        CONTRACTS -. "best-effort opt-in event" .-> EVENTS
-        CONTRACTS -. "current turn only" .-> DEV
-        DEV -. "human inspects AI result" .-> TESTER
+        TESTER --> PERF
+        TESTS -.-> OFFLINE
+        TESTS -.-> PRODUCT
+        EVAL -.-> PRODUCT
+        MANIFEST --> PERF
+        RESPONSE -.-> LOG
+        BRIEF -.-> LOG
     end
 
     classDef human fill:#FFF2CC,stroke:#8A6D1D,stroke-width:2px,color:#2D2408;
@@ -96,10 +156,10 @@ flowchart TB
     classDef guard fill:#FFE0E0,stroke:#A33A3A,stroke-width:1.5px,color:#461919;
     classDef test fill:#E0F4F7,stroke:#337783,stroke-width:1.5px,color:#14373D;
 
-    class LISTENER,CURATOR,TESTER human;
-    class UI,CLI,POLICY,CONTRACTS,DEV,RESULT interface;
-    class AGENT,RETRIEVER,VOICE,GEMINI ai;
-    class FUSION,INDEX,SESSION,FALLBACK deterministic;
-    class CATALOG,GUIDES,EVENTS data;
-    class GUARD,RESULT_EVAL,FRAMING_GUARD,SAFE guard;
-    class TESTS,EVAL test;
+    class HUMAN,RESEARCH_BUTTON,ANNOTATOR,TESTER human;
+    class SURFACE,RESPONSE,CAPABILITY interface;
+    class TRAIN,VOICE,GROUNDED ai;
+    class PARSER,ETL,MOOD,RESOLVER,TEXT,STRUCT,RRF,CONF,MMR,TFIDF,FRANK,LOCAL_VOICE,IDENTITY,LOCAL_SUMMARY,SAMPLE,READINESS deterministic;
+    class FMAZIP,LIBROSA,ECHONEST,FULL,LITE,MANIFEST,RELEASE,ROSQL,FCAT,GUIDES,SESSION,BRIEF,LABELS,DEAM,LOG data;
+    class INTEGRITY,ABSTAIN,GUARD,INTENT,RESULT_EVAL,CITATION,PROMOTION,EXPERIMENTAL guard;
+    class TESTS,EVAL,PERF,DEAM_TEST,CALIBRATE test;

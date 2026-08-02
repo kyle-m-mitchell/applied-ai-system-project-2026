@@ -21,7 +21,13 @@ structured signal at all (**not evaluated**, distinct from a real ``0.0``).
 
 from __future__ import annotations
 
-from src.contracts import CatalogTrack, FeatureGoal, FeatureRelation, MusicIntent
+from src.contracts import (
+    CatalogTrack,
+    FeatureGoal,
+    FeatureRelation,
+    FieldOrigin,
+    MusicIntent,
+)
 from src.features import categorical_score, normalize_unit, numeric_closeness
 from src.recommender import GENRE_TO_FAMILY, MOOD_TO_FAMILY
 
@@ -49,13 +55,17 @@ def _to_unit(feature: str, value: float) -> float:
     return value  # already 0-1 (validated on the catalog)
 
 
-def goal_score(goal: FeatureGoal, track: CatalogTrack) -> float:
-    """Score one directional goal against a track, in ``[0, 1]``.
+def goal_score(goal: FeatureGoal, track: CatalogTrack) -> float | None:
+    """Score one directional goal against a track, or abstain when it is unknown.
 
     All comparisons happen on the 0-1 scale (tempo normalized first), so a BPM
-    goal and an energy goal are measured the same honest way.
+    goal and an energy goal are measured the same honest way. ``None`` means the
+    catalog did not supply a trustworthy value; it is not a zero-strength match.
     """
-    value = _to_unit(goal.feature, getattr(track, goal.feature))
+    raw_value = getattr(track, goal.feature)
+    if raw_value is None:
+        return None
+    value = _to_unit(goal.feature, raw_value)
     relation = goal.relation
 
     if relation is FeatureRelation.PREFER_HIGH:
@@ -80,6 +90,25 @@ def goal_score(goal: FeatureGoal, track: CatalogTrack) -> float:
     return max(0.0, 1.0 - distance)
 
 
+def _evidence_confidence(track: CatalogTrack, feature: str) -> float:
+    """Return the ranking confidence for one available feature value.
+
+    Authored and source-computed values keep full weight. Only explicitly
+    ``model_estimated`` values are discounted; their lineage contract requires a
+    calibrated confidence. The offline ETL abstains entirely by storing ``None``
+    when an estimate is too uncertain.
+    """
+    lineage = next(
+        (item for item in track.lineage if item.field_name == feature),
+        None,
+    )
+    if lineage is None or lineage.origin is not FieldOrigin.MODEL_ESTIMATED:
+        return 1.0
+    # FieldLineage validation requires confidence for model estimates.
+    assert lineage.confidence is not None
+    return lineage.confidence
+
+
 def structured_relevance(
     intent: MusicIntent, track: CatalogTrack
 ) -> tuple[float | None, tuple[str, ...]]:
@@ -92,7 +121,7 @@ def structured_relevance(
     achieved = 0.0
     reasons: list[str] = []
 
-    if intent.genre:
+    if intent.genre and track.genre is not None:
         score = categorical_score(intent.genre, track.genre, GENRE_TO_FAMILY)
         total += W_GENRE
         achieved += W_GENRE * score
@@ -101,7 +130,7 @@ def structured_relevance(
         elif score > 0.0:
             reasons.append(f"genre ~{track.genre}")
 
-    if intent.mood:
+    if intent.mood and track.mood is not None:
         score = categorical_score(intent.mood, track.mood, MOOD_TO_FAMILY)
         total += W_MOOD
         achieved += W_MOOD * score
@@ -113,9 +142,15 @@ def structured_relevance(
     for goal in intent.feature_goals:
         weight = W_GOAL * goal.strength
         score = goal_score(goal, track)
+        if score is None:
+            # Unknown is an abstention: it contributes neither score nor weight.
+            # Counting the weight would quietly turn missing data into a penalty.
+            continue
         total += weight
-        achieved += weight * score
-        if score >= _REASON_THRESHOLD:
+        confidence = _evidence_confidence(track, goal.feature)
+        effective_score = score * confidence
+        achieved += weight * effective_score
+        if effective_score >= _REASON_THRESHOLD:
             reasons.append(f"{goal.feature} {goal.relation.value}")
 
     if total == 0.0:

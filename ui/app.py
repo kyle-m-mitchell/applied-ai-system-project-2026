@@ -5,12 +5,15 @@ from __future__ import annotations
 import streamlit as st
 
 from src.contracts import (
+    CatalogDescriptor,
     CompanionAction,
     DiversityLevel,
     ExecutionPolicy,
     FeatureGoal,
+    FeatureRelation,
     GuardCategory,
 )
+from src.research import ResearchOutcome
 from src.refine import (
     REFINEMENTS,
     IntentPatch,
@@ -37,7 +40,7 @@ from ui.components import (
     render_skip_link,
     render_track_cards,
 )
-from ui.examples import EXAMPLES
+from ui.examples import examples_for_catalog
 from ui.runtime import RuntimeBundle, get_runtime
 from ui.state import (
     UiSession,
@@ -57,11 +60,14 @@ STATE_KEY = "cadence_ui_session"
 LOCAL_KEY = "cadence_local_only"
 DEV_KEY = "cadence_developer_view"
 PENDING_SEARCH_KEY = "cadence_pending_search"
+CATALOG_KEY = "cadence_catalog"
+RESEARCH_KEY = "cadence_research_cache"
+CATALOG_CHOICES = ("fma", "fictional")
 
 
 def _state() -> UiSession:
     if STATE_KEY not in st.session_state:
-        st.session_state[STATE_KEY] = UiSession()
+        st.session_state[STATE_KEY] = UiSession(catalog_id="fma")
     return st.session_state[STATE_KEY]
 
 
@@ -69,12 +75,41 @@ def _set_state(value: UiSession) -> None:
     st.session_state[STATE_KEY] = value
 
 
-def _clear_dynamic_widgets() -> None:
+def _clear_dynamic_widgets(*, include_session_artifacts: bool = False) -> None:
     for key in list(st.session_state):
         if str(key).startswith(
-            ("console_", "followup_", "fit_", "search_", "quick_", "cadence_pending")
+            (
+                "console_",
+                "followup_",
+                "fit_",
+                "search_",
+                "quick_",
+                "research_",
+                "catalog_link_",
+                "cadence_pending",
+            )
         ):
             del st.session_state[key]
+    if include_session_artifacts:
+        st.session_state[RESEARCH_KEY] = {}
+
+
+def _research_cache() -> dict[str, ResearchOutcome]:
+    cache = st.session_state.get(RESEARCH_KEY)
+    if not isinstance(cache, dict):
+        cache = {}
+        st.session_state[RESEARCH_KEY] = cache
+    return cache
+
+
+def _catalog_change_callback() -> None:
+    """Treat a catalog switch as a hard namespace boundary for listener state."""
+    selected = st.session_state.get(CATALOG_KEY, "fma")
+    if selected not in CATALOG_CHOICES:
+        selected = "fma"
+        st.session_state[CATALOG_KEY] = selected
+    _set_state(UiSession(catalog_id=selected))
+    _clear_dynamic_widgets(include_session_artifacts=True)
 
 
 def _undo_callback() -> None:
@@ -86,8 +121,9 @@ def _undo_callback() -> None:
 
 
 def _reset_callback() -> None:
-    _set_state(UiSession())
-    _clear_dynamic_widgets()
+    selected = st.session_state.get(CATALOG_KEY, "fma")
+    _set_state(UiSession(catalog_id=selected))
+    _clear_dynamic_widgets(include_session_artifacts=True)
 
 
 def _dismiss_callback() -> None:
@@ -127,7 +163,7 @@ def _run_initial(bundle: RuntimeBundle, prompt: str, local_only: bool) -> None:
             )
         )
     else:
-        _set_state(start_session(turn, selected))
+        _set_state(start_session(turn, selected, catalog_id=bundle.catalog_id))
     st.rerun()
 
 
@@ -156,7 +192,11 @@ def _commit_refinement(
 def _render_search(bundle: RuntimeBundle, local_only: bool, *, first_run: bool) -> None:
     heading = "Describe a moment" if first_run else "Start a new direction"
     placeholder = (
-        "e.g. clean instrumental focus music, calm and acoustic"
+        (
+            "e.g. calm independent electronic music for focused writing"
+            if bundle.catalog_id == "fma"
+            else "e.g. clean instrumental focus music, calm and acoustic"
+        )
         if first_run
         else "Describe a completely new mix…"
     )
@@ -187,7 +227,7 @@ def _render_search(bundle: RuntimeBundle, local_only: bool, *, first_run: bool) 
 def _render_examples(bundle: RuntimeBundle, local_only: bool) -> None:
     st.caption("Or begin with a designed example")
     with st.container(horizontal=True, gap="small", key="example_prompts"):
-        for example in EXAMPLES:
+        for example in examples_for_catalog(bundle.catalog_id):
             if st.button(
                 example.label,
                 key=f"example_{example.key}",
@@ -264,12 +304,25 @@ def _remove_facet(bundle: RuntimeBundle, local_only: bool, facet: str) -> None:
     _commit_refinement(bundle, after, policy, changes)
 
 
+def _supports_filter(descriptor: CatalogDescriptor | None, name: str) -> bool:
+    """A missing descriptor is the legacy fictional implementation."""
+    return descriptor is None or descriptor.capabilities.supports_filter(name)
+
+
+def _supports_feature(descriptor: CatalogDescriptor | None, name: str) -> bool:
+    return descriptor is None or name in descriptor.capabilities.supported_features
+
+
 def _render_taste_console(bundle: RuntimeBundle, local_only: bool) -> None:
     state = _state()
     current = state.current
     if current is None or current.turn.response.intent is None:
         return
     intent = current.turn.response.intent
+    descriptor = bundle.catalog_descriptor
+    supports_instrumental_filter = _supports_filter(descriptor, "instrumental_only")
+    supports_clean_filter = _supports_filter(descriptor, "exclude_explicit")
+    supports_instrumentalness = _supports_feature(descriptor, "instrumentalness")
     token = current.turn.receipt.request_id[:10]
     st.markdown("## Taste Console")
     st.caption(
@@ -325,6 +378,24 @@ def _render_taste_console(bundle: RuntimeBundle, local_only: bool) -> None:
             ),
             width="stretch",
         )
+        instrumental_character = None
+        instrumental_options = ("Less", "Any", "More")
+        if supports_instrumentalness:
+            instrumental_character = st.segmented_control(
+                "Instrumental character",
+                instrumental_options,
+                default=_setting(
+                    feature_direction(intent, "instrumentalness"),
+                    instrumental_options,
+                ),
+                key=f"console_instrumentalness_{token}",
+                required=True,
+                help=(
+                    "A soft instrumentalness preference where a trustworthy value "
+                    "exists. It does not claim a track is verified instrumental-only."
+                ),
+                width="stretch",
+            )
 
         existing_tempo = tempo_target(intent)
         tempo_enabled = st.toggle(
@@ -352,12 +423,35 @@ def _render_taste_console(bundle: RuntimeBundle, local_only: bool) -> None:
             "Instrumental only",
             value=intent.instrumental_only,
             key=f"console_instrumental_{token}",
+            disabled=not supports_instrumental_filter,
+            help=(
+                "This catalog can verify the instrumental boolean."
+                if supports_instrumental_filter
+                else "Unavailable: this catalog cannot prove instrumental-only status. Use the soft instrumental-character control instead."
+            ),
         )
         clean = st.toggle(
             "Clean only",
             value=intent.exclude_explicit,
             key=f"console_clean_{token}",
+            disabled=not supports_clean_filter,
+            help=(
+                "This catalog can verify explicit-content status."
+                if supports_clean_filter
+                else "Unavailable: this catalog cannot verify lyric cleanliness, so Cadence will not guess."
+            ),
         )
+        unsupported: list[str] = []
+        if not supports_instrumental_filter:
+            unsupported.append("instrumental-only")
+        if not supports_clean_filter:
+            unsupported.append("clean-only")
+        if unsupported:
+            st.caption(
+                "Unavailable for this catalog: "
+                + " and ".join(unsupported)
+                + ". Unknown is not treated as false."
+            )
 
         st.markdown("**Set variety**")
         variety_options = ("Focused", "Balanced", "Exploratory")
@@ -387,9 +481,32 @@ def _render_taste_console(bundle: RuntimeBundle, local_only: bool) -> None:
         "danceability": _direction(movement, movement_options),
         "acousticness": _direction(texture, texture_options),
     }
+    if supports_instrumentalness:
+        directions["instrumentalness"] = _direction(
+            instrumental_character, instrumental_options
+        )
     goals: list[FeatureGoal] = []
     for feature, direction in directions.items():
-        goal = directional_goal(feature, direction)
+        if feature == "instrumentalness":
+            goal = (
+                None
+                if direction == 0
+                else FeatureGoal(
+                    feature=feature,
+                    relation=(
+                        FeatureRelation.PREFER_LOW
+                        if direction < 0
+                        else FeatureRelation.PREFER_HIGH
+                    ),
+                    cue_id=(
+                        "instrumentalness_prefer_low_v1"
+                        if direction < 0
+                        else "instrumentalness_prefer_high_v1"
+                    ),
+                )
+            )
+        else:
+            goal = directional_goal(feature, direction)
         if goal is not None:
             goals.append(goal)
     if tempo_enabled:
@@ -405,8 +522,10 @@ def _render_taste_console(bundle: RuntimeBundle, local_only: bool) -> None:
     patch = IntentPatch(
         goals=tuple(goals),
         clear_features=tuple(FeatureGoal.NUMERIC_FEATURES),
-        instrumental_only=instrumental,
-        exclude_explicit=clean,
+        instrumental_only=(
+            instrumental if supports_instrumental_filter else intent.instrumental_only
+        ),
+        exclude_explicit=clean if supports_clean_filter else intent.exclude_explicit,
     )
     after = apply_intent_patch(intent, patch)
     selected_diversity = (
@@ -559,7 +678,16 @@ def _render_results(bundle: RuntimeBundle, local_only: bool, developer: bool) ->
             unsafe_allow_html=True,
         )
         render_framing(turn)
-        render_track_cards(turn, developer=developer)
+        research_agent = (
+            bundle.provider_free_research_agent if local_only else bundle.research_agent
+        )
+        render_track_cards(
+            turn,
+            catalog_descriptor=bundle.catalog_descriptor,
+            developer=developer,
+            research_agent=research_agent,
+            research_cache=_research_cache(),
+        )
     with console_col:
         _render_taste_console(bundle, local_only)
 
@@ -609,7 +737,18 @@ def run() -> None:
     if len(st.query_params):
         st.query_params.clear()
 
+    if CATALOG_KEY not in st.session_state:
+        st.session_state[CATALOG_KEY] = "fma"
+    selected_catalog = st.session_state[CATALOG_KEY]
+    if selected_catalog not in CATALOG_CHOICES:
+        selected_catalog = "fma"
+        st.session_state[CATALOG_KEY] = selected_catalog
+
     state = _state()
+    if state.catalog_id != selected_catalog:
+        _set_state(UiSession(catalog_id=selected_catalog))
+        _clear_dynamic_widgets(include_session_artifacts=True)
+        state = _state()
     first_run = state.current is None
     if LOCAL_KEY not in st.session_state:
         st.session_state[LOCAL_KEY] = True
@@ -620,19 +759,6 @@ def run() -> None:
         # Make the visible control agree with the backend's monotonic lock.
         st.session_state[LOCAL_KEY] = True
 
-    try:
-        bundle = get_runtime()
-    except Exception as exc:  # a broken catalog/config is a startup state, not a traceback
-        render_brand()
-        st.error(
-            "Cadence could not load its validated catalog. The app is temporarily unavailable.",
-            icon=":material/error:",
-        )
-        if st.session_state.get(DEV_KEY, False):
-            st.exception(exc)
-        st.button("Retry", on_click=get_runtime.clear)
-        return
-
     active_turn = state.transient or (state.current.turn if state.current else None)
     paused = bool(
         active_turn
@@ -642,6 +768,17 @@ def run() -> None:
     with brand_col:
         render_brand(compact=not first_run, paused=paused)
     with controls_col:
+        st.selectbox(
+            "Music catalog",
+            CATALOG_CHOICES,
+            key=CATALOG_KEY,
+            format_func=lambda value: "FMA" if value == "fma" else "Fictional",
+            on_change=_catalog_change_callback,
+            help=(
+                "FMA is selected initially. Full and Lite are verified editions of "
+                "the same FMA catalog, chosen automatically by artifact availability."
+            ),
+        )
         local_only = st.toggle(
             "Local-only",
             key=LOCAL_KEY,
@@ -653,10 +790,6 @@ def run() -> None:
             key=DEV_KEY,
             help="Shows request-local IDs, timings, provenance, and fingerprints—never prompt text.",
         )
-        if bundle.provider_configured:
-            st.caption("Cloud assist is configured but used only when local-only is off.")
-        else:
-            st.caption("No cloud key detected; cached/local paths remain fully usable.")
         render_privacy_explainer()
         if privacy_locked:
             st.warning(
@@ -673,15 +806,41 @@ def run() -> None:
                 icon=":material/schedule:",
             )
 
+    try:
+        bundle = get_runtime(selected_catalog)
+    except Exception as exc:  # a broken catalog/config is a startup state, not a traceback
+        st.error(
+            "Cadence could not load the selected verified catalog. Choose the other "
+            "catalog above or retry after restoring its artifact.",
+            icon=":material/error:",
+        )
+        if developer:
+            st.exception(exc)
+        st.button("Retry", on_click=get_runtime.clear)
+        return
+
+    if bundle.provider_configured:
+        st.caption("Cloud assist is configured but used only when local-only is off.")
+    else:
+        st.caption("No cloud key detected; cached/local recommendation paths remain usable.")
+
     if first_run:
         _render_search(bundle, local_only, first_run=True)
         _render_examples(bundle, local_only)
         render_first_run_story()
-        render_disclosure()
+        render_disclosure(
+            bundle.catalog_descriptor,
+            artifact_source=bundle.catalog_artifact_source,
+            warnings=bundle.catalog_warnings,
+        )
         return
 
     _render_results(bundle, local_only, developer)
     with st.expander("Start a different mix", icon=":material/add_circle:"):
         _render_search(bundle, local_only, first_run=False)
     st.divider()
-    render_disclosure()
+    render_disclosure(
+        bundle.catalog_descriptor,
+        artifact_source=bundle.catalog_artifact_source,
+        warnings=bundle.catalog_warnings,
+    )

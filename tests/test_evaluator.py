@@ -73,6 +73,24 @@ def test_hard_constraint_violation_flagged():
     assert any("clean" in f for f in report.failures)
 
 
+def test_unknown_booleans_cannot_satisfy_verified_hard_constraints():
+    instrumental = GroundingEvaluator().evaluate_result(
+        MusicIntent(query="wordless", limit=5, instrumental_only=True),
+        [_hit(1, instrumental=None)],
+        VALID_IDS,
+    )
+    assert not instrumental.ok
+    assert any("instrumental" in failure for failure in instrumental.failures)
+
+    clean = GroundingEvaluator().evaluate_result(
+        MusicIntent(query="clean", limit=5, exclude_explicit=True),
+        [_hit(2, explicit=None)],
+        VALID_IDS,
+    )
+    assert not clean.ok
+    assert any("clean" in failure for failure in clean.failures)
+
+
 def test_missing_evidence_flagged():
     intent = MusicIntent(query="chill", limit=5)
     report = GroundingEvaluator().evaluate_result(intent, [_hit(1, evidence=False)], VALID_IDS)
@@ -83,6 +101,24 @@ def test_missing_evidence_flagged():
     )
     report = GroundingEvaluator().evaluate_result(intent, [zero_semantic], VALID_IDS)
     assert any("evidence" in f for f in report.failures)
+
+
+def test_claimed_fields_must_exist_and_carry_real_values():
+    intent = MusicIntent(query="chill", limit=5)
+    missing = _hit(1).model_copy(
+        update={
+            "track": _hit(1).track.model_copy(update={"mood": None}),
+            "fields_used": ("mood",),
+        }
+    )
+    report = GroundingEvaluator().evaluate_result(intent, [missing], VALID_IDS)
+    assert not report.ok
+    assert any("unavailable evidence fields" in failure for failure in report.failures)
+
+    nonexistent = _hit(1).model_copy(update={"fields_used": ("invented_field",)})
+    report = GroundingEvaluator().evaluate_result(intent, [nonexistent], VALID_IDS)
+    assert not report.ok
+    assert any("unavailable evidence fields" in failure for failure in report.failures)
 
 
 def test_grounded_text_accepts_clean_framing_but_reserves_names_for_the_app():

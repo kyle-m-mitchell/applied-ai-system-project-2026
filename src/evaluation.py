@@ -131,11 +131,14 @@ def run_case(companion: MusicCompanion, case: dict, scenario: str) -> dict:
     if _has_hard_constraint(expect):
         hard_ok = True
         if expect.get("instrumental_only") and (
-            not all(h.track.instrumental for h in hits) or "instrumental_only" not in filters
+            not all(h.track.instrumental is True for h in hits)
+            or "instrumental_only" not in filters
         ):
             failures.append("instrumental_only not enforced")
             hard_ok = False
-        if expect.get("exclude_explicit") and any(h.track.explicit for h in hits):
+        if expect.get("exclude_explicit") and any(
+            h.track.explicit is not False for h in hits
+        ):
             failures.append("explicit track leaked")
             hard_ok = False
 

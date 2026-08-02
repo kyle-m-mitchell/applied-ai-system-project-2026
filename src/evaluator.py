@@ -100,16 +100,35 @@ class GroundingEvaluator:
             failures.append(f"unknown track ids: {unknown}")
         if len(ids) != len(set(ids)):
             failures.append("duplicate track ids")
-        if intent.instrumental_only and any(not hit.track.instrumental for hit in hits):
+        if intent.instrumental_only and any(
+            hit.track.instrumental is not True for hit in hits
+        ):
             failures.append("instrumental-only constraint violated")
-        if intent.exclude_explicit and any(hit.track.explicit for hit in hits):
+        if intent.exclude_explicit and any(
+            hit.track.explicit is not False for hit in hits
+        ):
             failures.append("clean constraint violated")
+        if any(not self._fields_are_present(hit) for hit in hits):
+            failures.append("a hit claims unavailable evidence fields")
         if any(not self._has_evidence(hit) for hit in hits):
             failures.append("a hit carries no evidence")
         if len(hits) > intent.limit:
             failures.append("more hits than requested")
 
         return EvaluationReport(ok=not failures, failures=tuple(failures))
+
+    @staticmethod
+    def _fields_are_present(hit: RetrievalHit) -> bool:
+        """Reject provenance that names absent or unknown-valued track fields."""
+        for field in hit.fields_used:
+            if not hasattr(hit.track, field):
+                return False
+            value = getattr(hit.track, field)
+            if value is None:
+                return False
+            if isinstance(value, (tuple, list, set, dict, str)) and not value:
+                return False
+        return True
 
     @staticmethod
     def _has_evidence(hit: RetrievalHit) -> bool:

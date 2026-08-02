@@ -11,11 +11,12 @@ provider — and the trace records categories and ids, never raw sensitive text.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from uuid import uuid4
 
 from src.contracts import (
     AgentTrace,
+    CatalogDescriptor,
     CatalogTrack,
     CompanionAction,
     CompanionResponse,
@@ -31,6 +32,7 @@ from src.contracts import (
     RetrievalHit,
     SignalComparison,
     SignalRow,
+    TrackRef,
     VoiceSource,
 )
 from src.evaluator import GroundingEvaluator
@@ -72,6 +74,16 @@ TRACE_CUE_IDS = frozenset(
         "tempo_near_ui_v1",
         "ui_danceability_low_v1",
         "ui_acousticness_low_v1",
+        "instrumentalness_prefer_high_v1",
+        "instrumentalness_prefer_low_v1",
+        "mood_upbeat_energy_prefer_high_v1",
+        "mood_upbeat_valence_prefer_high_v1",
+        "mood_calm_energy_prefer_low_v1",
+        "mood_calm_valence_prefer_high_v1",
+        "mood_intense_energy_prefer_high_v1",
+        "mood_intense_valence_prefer_low_v1",
+        "mood_somber_energy_prefer_low_v1",
+        "mood_somber_valence_prefer_low_v1",
     }
 )
 
@@ -89,21 +101,71 @@ class MusicCompanion:
         generator: TextGenerator | None = None,
         event_sink: EventSink | None = None,
         config_fingerprint: str | None = None,
+        catalog_descriptor: CatalogDescriptor | None = None,
+        valid_ids: Collection[int] | None = None,
+        valid_genres: Collection[str] | None = None,
+        valid_moods: Collection[str] | None = None,
+        catalog_artifact_source: str | None = None,
+        catalog_warnings: Sequence[str] = (),
     ) -> None:
         self._guard = InputGuard()
-        self._parser = IntentParser()
+        self._catalog_descriptor = catalog_descriptor
+        self._catalog_artifact_source = catalog_artifact_source
+        self._catalog_warnings = tuple(catalog_warnings)
+        self._catalog_id = (
+            catalog_descriptor.catalog_id
+            if catalog_descriptor is not None
+            else (tracks[0].catalog_id if tracks else "fictional")
+        )
+        is_fma = self._catalog_id == "fma"
+        supports_instrumentalness = bool(
+            catalog_descriptor
+            and "instrumentalness"
+            in catalog_descriptor.capabilities.supported_features
+        )
+        self._parser = IntentParser(
+            experimental_mood_axes=is_fma,
+            soft_instrumentalness=is_fma and supports_instrumentalness,
+        )
         self._evaluator = GroundingEvaluator()
         self._voice = CadenceVoice(self._evaluator)
         self._generator = generator
-        self._valid_ids = {track.id for track in tracks}
-        self._valid_genres = {track.genre for track in tracks}
-        self._valid_moods = {track.mood for track in tracks}
+        self._valid_ids = (
+            set(valid_ids) if valid_ids is not None else {track.id for track in tracks}
+        )
+        self._valid_genres = (
+            set(valid_genres)
+            if valid_genres is not None
+            else {track.genre for track in tracks if track.genre is not None}
+        )
+        self._valid_moods = (
+            set(valid_moods)
+            if valid_moods is not None
+            else {track.mood for track in tracks if track.mood is not None}
+        )
         self._local = (
             local_retriever if local_retriever is not None else TfidfRetriever(tracks, guides)
         )
         self._default = default_retriever if default_retriever is not None else self._local
         self._events = event_sink if event_sink is not None else NullEventSink()
         self._config_fingerprint = config_fingerprint
+
+    @property
+    def catalog_descriptor(self) -> CatalogDescriptor | None:
+        """Describe the active catalog artifact without exposing mutable storage."""
+        return self._catalog_descriptor
+
+    @property
+    def catalog_id(self) -> str:
+        return self._catalog_id
+
+    @property
+    def catalog_artifact_source(self) -> str | None:
+        return self._catalog_artifact_source
+
+    @property
+    def catalog_warnings(self) -> tuple[str, ...]:
+        return self._catalog_warnings
 
     def respond(
         self,
@@ -240,6 +302,10 @@ class MusicCompanion:
                     response=response,
                     candidates=candidates,
                     candidate_ids=candidate_ids,
+                    candidate_refs=tuple(
+                        TrackRef(catalog_id=self._catalog_id, track_id=track_id)
+                        for track_id in candidate_ids
+                    ),
                     latency_ms=latency_ms,
                     config_fingerprint=self._config_fingerprint,
                     force_local=receipt_force_local(response, policy),
@@ -424,6 +490,19 @@ class MusicCompanion:
         policy: ExecutionPolicy,
     ) -> tuple[CompanionResponse, tuple[int, ...], SignalComparison | None]:
         """Run the shared post-guard pipeline for text and controlled refinements."""
+        unsupported = self._unsupported_capability(intent)
+        if unsupported is not None:
+            return (
+                self._simple(
+                    category,
+                    CompanionAction.CLARIFY,
+                    unsupported,
+                    intent=intent,
+                ),
+                (),
+                None,
+            )
+
         # Retrieve a pool, fuse in structured preferences (when present), then
         # diversify down to the requested count. A larger pool when structured
         # signal exists gives the structured leg room to lift a well-matched track
@@ -433,17 +512,22 @@ class MusicCompanion:
         retriever = self._local if force_local else self._default
         structured_active = bool(intent.genre or intent.mood or intent.feature_goals)
         pool_k = max(intent.limit * 8, 40) if structured_active else max(intent.limit * 4, 12)
-        pool = retriever.search(
-            intent.query,
-            k=pool_k,
-            instrumental_only=intent.instrumental_only,
-            exclude_explicit=intent.exclude_explicit,
-        )
+        intent_search = getattr(retriever, "search_with_intent", None)
+        intent_aware = callable(intent_search)
+        if intent_aware:
+            pool = intent_search(intent, k=pool_k)
+        else:
+            pool = retriever.search(
+                intent.query,
+                k=pool_k,
+                instrumental_only=intent.instrumental_only,
+                exclude_explicit=intent.exclude_explicit,
+            )
         candidate_ids = tuple(hit.track.id for hit in pool.hits)
         # Keep the pre-fusion pool so the developer view can show, honestly, how
         # the same candidates would rank under text alone vs structured vs fused.
         text_hits = pool.hits
-        if structured_active and pool.hits:
+        if structured_active and pool.hits and not intent_aware:
             pool = pool.model_copy(update={"hits": fuse_pool(intent, pool.hits)})
         comparison = _build_comparison(text_hits, pool.hits, structured_active)
         # When a genre is explicitly requested, diversify by mood *within* it
@@ -488,6 +572,7 @@ class MusicCompanion:
                         guard_category=category,
                         intent_summary=self._intent_summary(intent),
                         retrieved_ids=tuple(hit.track.id for hit in diversified),
+                        retrieved_refs=tuple(hit.track.ref for hit in diversified),
                         diversity_applied=diversity_applied,
                         evaluation=evaluation,
                         action=CompanionAction.NO_MATCH,
@@ -529,6 +614,7 @@ class MusicCompanion:
                     guard_category=category,
                     intent_summary=self._intent_summary(intent),
                     retrieved_ids=tuple(hit.track.id for hit in diversified),
+                    retrieved_refs=tuple(hit.track.ref for hit in diversified),
                     diversity_applied=diversity_applied,
                     evaluation=evaluation,
                     text_evaluation=voice.text_evaluation,
@@ -560,8 +646,15 @@ class MusicCompanion:
             request_id=request_id,
             latency_ms=latency_ms,
             candidate_ids=candidate_ids,
+            candidate_refs=tuple(
+                TrackRef(catalog_id=self._catalog_id, track_id=track_id)
+                for track_id in candidate_ids
+            ),
             final_ids=(
                 tuple(hit.track.id for hit in retrieval.hits) if retrieval else ()
+            ),
+            final_refs=(
+                tuple(hit.track.ref for hit in retrieval.hits) if retrieval else ()
             ),
             guard_category=(trace.guard_category if trace else GuardCategory.OK),
             action=response.action,
@@ -573,6 +666,36 @@ class MusicCompanion:
             voice_source=(trace.voice_source if trace else None),
             index_fingerprint=(retrieval.index_fingerprint if retrieval else None),
             config_fingerprint=self._config_fingerprint,
+        )
+
+    def _unsupported_capability(self, intent: MusicIntent) -> str | None:
+        """Clarify hard constraints this catalog cannot prove, before retrieval."""
+        descriptor = self._catalog_descriptor
+        if descriptor is None:
+            return None  # legacy fictional construction supports both booleans
+        capabilities = descriptor.capabilities
+        missing_clean = (
+            intent.exclude_explicit
+            and not capabilities.supports_filter("exclude_explicit")
+        )
+        missing_instrumental = (
+            intent.instrumental_only
+            and not capabilities.supports_filter("instrumental_only")
+        )
+        if not missing_clean and not missing_instrumental:
+            return None
+        if missing_clean and missing_instrumental:
+            unknown = "clean lyrics or instrumental-only status"
+            requirement = "those requirements"
+        elif missing_clean:
+            unknown = "clean lyrics"
+            requirement = "that requirement"
+        else:
+            unknown = "instrumental-only status"
+            requirement = "that requirement"
+        return (
+            f"I can’t verify {unknown} in this catalog, and I’d rather not guess. "
+            f"Remove {requirement} or switch to the fictional catalog."
         )
 
     def _simple(
@@ -642,10 +765,22 @@ def _build_comparison(
     """
     if not text_hits:
         return None
-    text_by_id = {hit.track.id: hit.score for hit in text_hits}
+    text_by_id = {
+        hit.track.id: (
+            hit.lexical_score
+            if hit.lexical_score is not None
+            else (
+                hit.semantic_score
+                if hit.semantic_score is not None
+                else hit.score
+            )
+        )
+        for hit in text_hits
+    }
     rows = tuple(
         SignalRow(
             track_id=hit.track.id,
+            track_ref=hit.track.ref,
             title=hit.track.title,
             text=text_by_id.get(hit.track.id, hit.score),
             structured=hit.structured_score if structured_active else None,

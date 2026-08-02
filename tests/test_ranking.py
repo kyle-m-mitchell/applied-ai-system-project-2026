@@ -8,7 +8,7 @@ from src.contracts import CatalogTrack, RetrievalHit, SourceType
 from src.ranking import _similarity, mmr_rerank, mood_similarity
 
 
-def _track(track_id: int, genre: str, mood: str) -> CatalogTrack:
+def _track(track_id: int, genre: str | None, mood: str | None) -> CatalogTrack:
     return CatalogTrack.model_validate(
         {
             "id": track_id,
@@ -102,6 +102,14 @@ def test_unknown_genres_are_not_treated_as_the_same_family():
     # sanity: same genre is unchanged (exact 1.0 / same-genre-different-mood 0.7)
     assert _similarity(_track(5, "polka", "chill"), _track(6, "polka", "chill")) == 1.0
     assert _similarity(_track(7, "polka", "chill"), _track(8, "polka", "somber")) == 0.7
+
+
+def test_missing_categories_are_not_evidence_of_similarity():
+    assert _similarity(_track(1, None, None), _track(2, None, None)) == 0.0
+    # A known shared genre is still modestly similar, but two missing moods do
+    # not upgrade that similarity to an exact genre+mood match.
+    assert _similarity(_track(3, "jazz", None), _track(4, "jazz", None)) == 0.7
+    assert mood_similarity(_track(5, "jazz", None), _track(6, "blues", None)) == 0.0
 
 
 def test_diversity_does_not_penalize_distinct_unknown_genres():

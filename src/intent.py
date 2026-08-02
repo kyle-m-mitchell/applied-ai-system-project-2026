@@ -31,6 +31,38 @@ _CLEAN_CUES = (
     "kid friendly", "kid-friendly", "radio edit",
 )
 
+# FMA cannot prove a binary "instrumental" fact, but it may carry a trustworthy
+# continuous instrumentalness estimate.  In the catalog-aware parser, these
+# phrases therefore become soft ordering goals rather than hard eligibility
+# filters. Bare "instrumental", "no vocals", and similar phrases stay hard and
+# are handled by capability validation before retrieval.
+_SOFT_INSTRUMENTAL_CUES = {
+    "more instrumental": FeatureRelation.PREFER_HIGH,
+    "less instrumental": FeatureRelation.PREFER_LOW,
+}
+
+# Experimental quadrant words are aliases for two transparent numeric axes,
+# never authored categorical mood facts.  This mapping is enabled only for the
+# FMA catalog, leaving the fictional regression parser byte-for-byte compatible.
+_QUADRANT_GOALS: dict[str, tuple[tuple[str, FeatureRelation], ...]] = {
+    "upbeat": (
+        ("energy", FeatureRelation.PREFER_HIGH),
+        ("valence", FeatureRelation.PREFER_HIGH),
+    ),
+    "calm": (
+        ("energy", FeatureRelation.PREFER_LOW),
+        ("valence", FeatureRelation.PREFER_HIGH),
+    ),
+    "intense": (
+        ("energy", FeatureRelation.PREFER_HIGH),
+        ("valence", FeatureRelation.PREFER_LOW),
+    ),
+    "somber": (
+        ("energy", FeatureRelation.PREFER_LOW),
+        ("valence", FeatureRelation.PREFER_LOW),
+    ),
+}
+
 # Directional numeric cues: (cue_id, feature, relation, trigger phrases).
 # Ordered by feature; each cue_id appears at most once in a parse.
 _PREFERENCE_CUES: tuple[tuple[str, str, FeatureRelation, tuple[str, ...]], ...] = (
@@ -117,6 +149,8 @@ def neutral_query_text(text: str, intent: MusicIntent) -> str:
             phrases.extend(
                 trigger for trigger in triggers if trigger not in _CONTEXT_ANCHORS
             )
+    if any(goal.feature == "instrumentalness" for goal in intent.feature_goals):
+        phrases.extend(_SOFT_INSTRUMENTAL_CUES)
     if any(goal.feature == "tempo_bpm" for goal in intent.feature_goals):
         for pattern in (_TEMPO_RANGE, _TEMPO_ATLEAST, _TEMPO_ATMOST, _TEMPO_NEAR):
             neutral = pattern.sub(" ", neutral.lower())
@@ -136,6 +170,7 @@ def _canonical_goal_text(goal: FeatureGoal) -> str:
             "valence": "bright",
             "danceability": "danceable",
             "tempo_bpm": "fast tempo",
+            "instrumentalness": "more instrumental",
         }[goal.feature]
     if goal.relation is FeatureRelation.PREFER_LOW:
         return {
@@ -144,6 +179,7 @@ def _canonical_goal_text(goal: FeatureGoal) -> str:
             "valence": "moody",
             "danceability": "less danceable",
             "tempo_bpm": "slow tempo",
+            "instrumentalness": "less instrumental",
         }[goal.feature]
     if goal.relation is FeatureRelation.RANGE:
         unit = " bpm" if goal.feature == "tempo_bpm" else ""
@@ -228,15 +264,70 @@ def _feature_goals(lowered: str) -> tuple[FeatureGoal, ...]:
 class IntentParser:
     """Turn a sanitized query into a typed :class:`MusicIntent`."""
 
+    def __init__(
+        self,
+        *,
+        experimental_mood_axes: bool = False,
+        soft_instrumentalness: bool = False,
+    ) -> None:
+        self._experimental_mood_axes = experimental_mood_axes
+        self._soft_instrumentalness = soft_instrumentalness
+
+    def _catalog_goals(self, lowered: str) -> tuple[FeatureGoal, ...]:
+        """Add catalog-specific soft goals while preserving explicit conflicts."""
+        goals = list(_feature_goals(lowered))
+
+        if self._soft_instrumentalness:
+            for phrase, relation in _SOFT_INSTRUMENTAL_CUES.items():
+                if _has_phrase(lowered, phrase):
+                    goals.append(
+                        FeatureGoal(
+                            feature="instrumentalness",
+                            relation=relation,
+                            cue_id=f"instrumentalness_{relation.value}_v1",
+                        )
+                    )
+
+        if self._experimental_mood_axes:
+            for label, axes in _QUADRANT_GOALS.items():
+                if not _has_phrase(lowered, label):
+                    continue
+                for feature, relation in axes:
+                    if any(
+                        goal.feature == feature and goal.relation is relation
+                        for goal in goals
+                    ):
+                        continue
+                    goals.append(
+                        FeatureGoal(
+                            feature=feature,
+                            relation=relation,
+                            cue_id=f"mood_{label}_{feature}_{relation.value}_v1",
+                        )
+                    )
+        return tuple(goals)
+
     def parse(self, sanitized_query: str, *, limit: int = 5) -> MusicIntent:
         text = sanitized_query.strip()
         lowered = text.lower()
 
-        instrumental_only = any(_has_phrase(lowered, cue) for cue in _INSTRUMENTAL_CUES)
+        hard_filter_text = lowered
+        if self._soft_instrumentalness:
+            for phrase in _SOFT_INSTRUMENTAL_CUES:
+                hard_filter_text = _remove_phrase(hard_filter_text, phrase)
+        instrumental_only = any(
+            _has_phrase(hard_filter_text, cue) for cue in _INSTRUMENTAL_CUES
+        )
         exclude_explicit = any(_has_phrase(lowered, cue) for cue in _CLEAN_CUES)
         genre = next((g for g in _GENRES if _has_phrase(lowered, g)), None)
         mood = next((m for m in _MOODS if _has_phrase(lowered, m)), None)
-        feature_goals = _feature_goals(lowered)
+        quadrant_present = self._experimental_mood_axes and any(
+            _has_phrase(lowered, label) for label in _QUADRANT_GOALS
+        )
+        if quadrant_present:
+            # A derived quadrant is deliberately not copied into authored mood.
+            mood = None
+        feature_goals = self._catalog_goals(lowered)
 
         goal_features = [goal.feature for goal in feature_goals]
         conflicts = sorted(

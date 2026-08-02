@@ -3,21 +3,28 @@
 from __future__ import annotations
 
 import html
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, MutableMapping
 
 import streamlit as st
 
 from src.contracts import (
+    CatalogDescriptor,
+    CatalogEdition,
+    CatalogTrack,
     CompanionAction,
     CompanionTurn,
     EmbeddingSource,
+    FieldLineage,
+    FieldOrigin,
     GuardCategory,
     MusicIntent,
     OperatingMode,
     RankedCandidate,
+    ResearchStatus,
     SignalComparison,
     VoiceSource,
 )
+from src.research import ResearchOutcome, TrackResearchAgent
 from src.scoring import candidates_from_hits
 from ui.state import UiSession
 
@@ -67,17 +74,47 @@ def render_brand(*, compact: bool = False, paused: bool = False) -> None:
     )
 
 
-def render_disclosure() -> None:
+def render_disclosure(
+    descriptor: CatalogDescriptor | None = None,
+    *,
+    artifact_source: str | None = None,
+    warnings: tuple[str, ...] = (),
+) -> None:
+    """Describe the concrete artifact in use without overstating its evidence."""
+    if descriptor is None or descriptor.edition is CatalogEdition.FICTIONAL:
+        body = (
+            "<strong>Regression catalog.</strong> Cadence is using the validated "
+            "fictional 200-track catalog. It is intentionally preserved as the "
+            "behavioral baseline. There is no playback."
+        )
+    else:
+        edition = "Full" if descriptor.edition is CatalogEdition.FULL else "Lite"
+        source = f" via {_e(artifact_source)}" if artifact_source else ""
+        mood = (
+            " Mood profiles are experimental audio-character estimates and may abstain."
+            if descriptor.calibration_status == "experimental"
+            else ""
+        )
+        fallback = (
+            " The verified 300-track fallback is active; it is an edition of FMA, "
+            "not a different catalog."
+            if descriptor.edition is CatalogEdition.LITE
+            else ""
+        )
+        body = (
+            f"<strong>FMA {edition}.</strong> Cadence is discovering independent music "
+            f"from a verified {_e(f'{descriptor.accepted_count:,}')}-track artifact{source}."
+            f"{fallback}{mood} Metadata coverage varies, and unknown values stay unknown."
+        )
     st.markdown(
-        """
-        <div class="cadence-disclosure">
-          <strong>Honest demo.</strong> Cadence recommends from a validated fictional
-          200-track catalog. There is no playback. Session refinements disappear when
-          this browser session ends, and they do not train a model.
-        </div>
-        """,
+        '<div class="cadence-disclosure">'
+        + body
+        + " Session refinements, ratings, and research disappear when this browser "
+        "session ends and do not train a model.</div>",
         unsafe_allow_html=True,
     )
+    if warnings:
+        st.caption("Catalog notice: " + " · ".join(warnings))
 
 
 def render_privacy_explainer() -> None:
@@ -164,6 +201,8 @@ def _goal_label(cue_id: str) -> str:
         "tempo_atleast_v1": "minimum tempo",
         "tempo_atmost_v1": "maximum tempo",
         "tempo_near_ui_v1": "tempo target",
+        "instrumentalness_prefer_high_v1": "more instrumental character",
+        "instrumentalness_prefer_low_v1": "less instrumental character",
     }
     if cue_id in labels:
         return labels[cue_id]
@@ -272,6 +311,7 @@ def _plain_reason(candidate: RankedCandidate, *, sensitive: bool) -> str:
                 "danceability": "movement",
                 "acousticness": "texture",
                 "tempo_bpm": "tempo",
+                "instrumentalness": "instrumental character",
             }.get(bits[0], bits[0])
             direction = {
                 "prefer_high": "leans higher",
@@ -332,7 +372,150 @@ def _signal_bar(label: str, value: float | None, color: str) -> None:
     )
 
 
-def render_track_cards(turn: CompanionTurn, *, developer: bool = False) -> None:
+def _edition_label(descriptor: CatalogDescriptor | None, track: CatalogTrack) -> str:
+    if descriptor is None or track.catalog_id == "fictional":
+        return "Fictional · regression"
+    edition = "Full" if descriptor.edition is CatalogEdition.FULL else "Lite"
+    return f"FMA {edition}"
+
+
+def _lineage_for(track: CatalogTrack, field: str) -> FieldLineage | None:
+    return next((item for item in track.lineage if item.field_name == field), None)
+
+
+def _origin_label(lineage: FieldLineage | None) -> str:
+    if lineage is None:
+        return "catalog value"
+    labels = {
+        FieldOrigin.AUTHORED: "authored",
+        FieldOrigin.ARTIST_SUPPLIED: "artist-supplied",
+        FieldOrigin.FMA_METADATA: "FMA metadata",
+        FieldOrigin.LIBROSA_COMPUTED: "Librosa-computed",
+        FieldOrigin.ECHONEST_COMPUTED: "Echo Nest-computed",
+        FieldOrigin.MODEL_ESTIMATED: "model-estimated",
+        FieldOrigin.DETERMINISTIC_DERIVED: "deterministically derived",
+        FieldOrigin.UNKNOWN: "unknown",
+    }
+    label = labels[lineage.origin]
+    if lineage.origin is FieldOrigin.MODEL_ESTIMATED:
+        details: list[str] = []
+        if lineage.confidence is not None:
+            details.append(f"{lineage.confidence:.0%} confidence")
+        if lineage.interval_low is not None and lineage.interval_high is not None:
+            details.append(f"interval {lineage.interval_low:.2f}–{lineage.interval_high:.2f}")
+        if details:
+            label += " · " + " · ".join(details)
+    return label
+
+
+def _render_audio_features(track: CatalogTrack) -> None:
+    known = (
+        ("Energy", "energy", track.energy, False),
+        ("Valence", "valence", track.valence, False),
+        ("Acousticness", "acousticness", track.acousticness, False),
+        ("Danceability", "danceability", track.danceability, False),
+        ("Instrumentalness", "instrumentalness", track.instrumentalness, False),
+        ("Tempo", "tempo_bpm", track.tempo_bpm, True),
+    )
+    visible = [item for item in known if item[2] is not None]
+    if not visible:
+        st.caption("Audio character: no trustworthy numeric values available.")
+        return
+    st.markdown("**Known audio character**")
+    for label, field, raw, bpm in visible:
+        assert raw is not None
+        value = f"{raw:.1f} BPM" if bpm else f"{raw:.2f}"
+        st.caption(f"{label}: {value} · {_origin_label(_lineage_for(track, field))}")
+
+
+def _render_scoped_text(track: CatalogTrack) -> None:
+    scopes = (
+        ("Catalog description", track.description),
+        ("Track information", track.track_information),
+        ("Album information", track.album_information),
+        ("Artist biography", track.artist_biography),
+    )
+    visible = [(label, value) for label, value in scopes if value]
+    if not visible:
+        st.caption("No source-supplied descriptive text is available for this track.")
+        return
+    for label, value in visible:
+        st.markdown(f"**{label}**")
+        st.write(value)
+
+
+def _local_track_summary(track: CatalogTrack) -> str:
+    facts: list[str] = []
+    genres = track.genres or ((track.genre,) if track.genre else ())
+    if genres:
+        facts.append("genres: " + ", ".join(genres[:4]))
+    numeric = [
+        label
+        for label, value in (
+            ("energy", track.energy),
+            ("valence", track.valence),
+            ("acousticness", track.acousticness),
+            ("danceability", track.danceability),
+            ("instrumentalness", track.instrumentalness),
+            ("tempo", track.tempo_bpm),
+        )
+        if value is not None
+    ]
+    if numeric:
+        facts.append("known audio fields: " + ", ".join(numeric))
+    if track.license:
+        facts.append(f"license: {track.license}")
+    return "; ".join(facts) or "Only the track identity is available locally."
+
+
+def _render_research_outcome(outcome: ResearchOutcome, track: CatalogTrack) -> None:
+    brief = outcome.brief
+    if brief.status is ResearchStatus.PUBLISHED:
+        st.success(
+            "Identity resolved and every published claim has a validated citation.",
+            icon=":material/fact_check:",
+        )
+        citations = {item.citation_id: item for item in brief.citations}
+        for claim in brief.claims:
+            st.write(claim.text)
+            st.caption(
+                "Cited by: "
+                + ", ".join(citations[item].source_domain for item in claim.citation_ids)
+            )
+        st.markdown("**Validated sources**")
+        for index, citation in enumerate(brief.citations, start=1):
+            st.link_button(
+                f"{index}. {citation.title}",
+                citation.url,
+                key=(
+                    f"research_source_{brief.track_ref.catalog_id}_"
+                    f"{brief.track_ref.track_id}_{citation.citation_id}"
+                ),
+                icon=":material/open_in_new:",
+            )
+        if brief.timestamp:
+            st.caption(f"Session-only research · {brief.timestamp}")
+    else:
+        warning = brief.warnings[0] if brief.warnings else "Research could not be verified."
+        st.warning(warning, icon=":material/search_off:")
+        st.caption("Deterministic local summary: " + _local_track_summary(track))
+
+    with st.expander("Research action trace", icon=":material/account_tree:"):
+        st.code("\n→ ".join(outcome.trace), language="text")
+        st.caption(
+            "This trace records sanitized actions and outcomes, never private reasoning. "
+            "Research did not alter eligibility, ranking, or catalog fields."
+        )
+
+
+def render_track_cards(
+    turn: CompanionTurn,
+    *,
+    catalog_descriptor: CatalogDescriptor | None = None,
+    developer: bool = False,
+    research_agent: TrackResearchAgent | None = None,
+    research_cache: MutableMapping[str, ResearchOutcome] | None = None,
+) -> None:
     response = turn.response
     if response.retrieval is None:
         return
@@ -340,7 +523,8 @@ def render_track_cards(turn: CompanionTurn, *, developer: bool = False) -> None:
     sensitive = turn.receipt.guard_category is GuardCategory.SENSITIVE
     for rank, candidate in enumerate(candidates, start=1):
         track = candidate.track
-        with st.container(border=True, key=f"track_card_{track.id}"):
+        source_key = track.ref.source_id.replace(":", "_")
+        with st.container(border=True, key=f"track_card_{source_key}"):
             st.markdown(
                 '<div class="cadence-track-head">'
                 + _cover(track.id, track.title)
@@ -351,12 +535,37 @@ def render_track_cards(turn: CompanionTurn, *, developer: bool = False) -> None:
                 unsafe_allow_html=True,
             )
             with st.container(horizontal=True, gap="small"):
-                st.badge(track.genre, color="blue")
-                st.badge(track.mood, color="violet")
-                st.badge(track.era, color="gray")
-                if response.intent and response.intent.instrumental_only and track.instrumental:
+                st.badge(
+                    _edition_label(catalog_descriptor, track),
+                    color="orange" if track.catalog_id == "fma" else "gray",
+                )
+                if track.genre:
+                    st.badge(track.genre, color="blue")
+                elif track.genres:
+                    st.badge(track.genres[0], color="blue")
+                if track.mood:
+                    st.badge(track.mood, color="violet")
+                elif track.mood_profile is not None:
+                    if track.mood_profile.label is not None:
+                        st.badge(
+                            f"{track.mood_profile.label.value} · experimental",
+                            color="violet",
+                        )
+                    else:
+                        st.badge("balanced / uncertain · experimental", color="gray")
+                if track.era:
+                    st.badge(track.era, color="gray")
+                if (
+                    response.intent
+                    and response.intent.instrumental_only
+                    and track.instrumental is True
+                ):
                     st.badge("Instrumental confirmed", color="green")
-                if response.intent and response.intent.exclude_explicit and not track.explicit:
+                if (
+                    response.intent
+                    and response.intent.exclude_explicit
+                    and track.explicit is False
+                ):
                     st.badge("Clean confirmed", color="green")
             st.markdown(
                 f'<div class="cadence-why"><strong>Why it fits:</strong> '
@@ -364,7 +573,21 @@ def render_track_cards(turn: CompanionTurn, *, developer: bool = False) -> None:
                 unsafe_allow_html=True,
             )
             with st.expander("Why this track?", icon=":material/tune:"):
-                st.markdown(f"**Catalog description**  \n{track.description}")
+                if track.mood_profile is not None:
+                    profile = track.mood_profile
+                    leader = (
+                        profile.label.value if profile.label is not None else "balanced/uncertain"
+                    )
+                    confidence = (
+                        f" · input-evidence confidence {profile.confidence:.0%}"
+                        if profile.confidence is not None
+                        else ""
+                    )
+                    st.caption(
+                        f"Experimental mood profile: {leader}{confidence}. This is derived "
+                        "from trustworthy valence/energy axes, not an authored FMA mood."
+                    )
+                _render_audio_features(track)
                 st.caption(
                     "Signals are ranking inputs—not confidence, probability, or a "
                     "prediction that you will like the track."
@@ -400,7 +623,64 @@ def render_track_cards(turn: CompanionTurn, *, developer: bool = False) -> None:
                         f"content_hash={candidate.content_hash[:16]}…",
                         language="text",
                     )
-            st.caption("Fictional demo track · no playback")
+            with st.expander("Source, rights & context", icon=":material/source:"):
+                _render_scoped_text(track)
+                st.markdown("**License**")
+                st.write(track.license or "Unknown — Cadence will not invent one.")
+                if catalog_descriptor and catalog_descriptor.attribution:
+                    st.caption("Attribution: " + " · ".join(catalog_descriptor.attribution))
+                links = tuple(
+                    dict.fromkeys(
+                        value
+                        for value in (
+                            track.track_url,
+                            track.artist_url,
+                            track.album_url,
+                            track.source_url,
+                        )
+                        if value
+                    )
+                )
+                for index, url in enumerate(links, start=1):
+                    st.link_button(
+                        f"Source link {index}",
+                        url,
+                        key=f"catalog_link_{source_key}_{index}",
+                        icon=":material/open_in_new:",
+                    )
+
+            if (
+                catalog_descriptor is not None
+                and catalog_descriptor.capabilities.research
+                and research_agent is not None
+                and research_cache is not None
+            ):
+                st.markdown("**Optional track research**")
+                st.caption(
+                    "Only this title and artist are sent for exact MusicBrainz identity "
+                    "resolution. When enabled, grounded search receives that resolved "
+                    "public identity. Your request, history, and preferences stay local."
+                )
+                cached = research_cache.get(track.ref.source_id)
+                if cached is None:
+                    if st.button(
+                        "Research this track",
+                        key=f"research_{source_key}",
+                        icon=":material/travel_explore:",
+                        help="Runs after ranking and cannot change this recommendation.",
+                    ):
+                        with st.spinner("Resolving identity and validating citations…"):
+                            research_cache[track.ref.source_id] = research_agent.research(track)
+                        st.rerun()
+                else:
+                    _render_research_outcome(cached, track)
+
+            source_note = (
+                "FMA catalog record · no playback"
+                if track.catalog_id == "fma"
+                else "Fictional regression track · no playback"
+            )
+            st.caption(source_note)
 
 
 def render_action_state(turn: CompanionTurn) -> None:

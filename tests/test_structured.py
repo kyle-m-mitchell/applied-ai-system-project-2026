@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from src.contracts import CatalogTrack, FeatureGoal, FeatureRelation, MusicIntent
+from src.contracts import (
+    CatalogTrack,
+    FeatureGoal,
+    FeatureRelation,
+    FieldLineage,
+    FieldOrigin,
+    MusicIntent,
+)
 from src.structured import goal_score, structured_relevance
 
 
@@ -78,3 +85,48 @@ def test_structured_relevance_combines_components_and_reasons():
     assert relevance == pytest.approx(4.6 / 4.75)
     assert "genre jazz" in reasons and "energy prefer_high" in reasons
     assert 0.0 <= relevance <= 1.0
+
+
+def test_unknown_features_abstain_instead_of_weakening_the_score():
+    energy = _goal("energy", FeatureRelation.PREFER_HIGH)
+    unknown = _track(energy=None)
+
+    assert goal_score(energy, unknown) is None
+    assert structured_relevance(MusicIntent(feature_goals=(energy,)), unknown) == (None, ())
+
+    relevance, reasons = structured_relevance(
+        MusicIntent(genre="jazz", feature_goals=(energy,)), unknown
+    )
+    assert relevance == 1.0
+    assert reasons == ("genre jazz",)
+
+
+def test_unknown_category_abstains_instead_of_becoming_a_mismatch():
+    assert structured_relevance(MusicIntent(genre="jazz"), _track(genre=None)) == (None, ())
+    assert structured_relevance(MusicIntent(mood="chill"), _track(mood=None)) == (None, ())
+
+
+def test_instrumentalness_is_a_soft_numeric_goal():
+    goal = _goal("instrumentalness", FeatureRelation.PREFER_HIGH)
+    track = _track().model_copy(update={"instrumentalness": 0.85})
+    assert goal_score(goal, track) == 0.85
+
+
+def test_model_estimate_confidence_discounts_its_structured_contribution():
+    goal = _goal("energy", FeatureRelation.PREFER_HIGH)
+    track = CatalogTrack.model_validate(
+        {
+            **_track(energy=0.8).model_dump(),
+            "lineage": (
+                FieldLineage(
+                    field_name="energy",
+                    origin=FieldOrigin.MODEL_ESTIMATED,
+                    method_version="energy-model-v1",
+                    confidence=0.5,
+                ),
+            ),
+        }
+    )
+    relevance, reasons = structured_relevance(MusicIntent(feature_goals=(goal,)), track)
+    assert relevance == pytest.approx(0.4)
+    assert reasons == ()  # low-confidence evidence cannot produce a strong-match reason

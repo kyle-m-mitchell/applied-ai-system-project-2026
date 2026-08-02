@@ -20,6 +20,7 @@ from src.contracts import (
     DiversityLevel,
     GuardCategory,
     RankedCandidate,
+    TrackRef,
 )
 
 
@@ -68,6 +69,7 @@ def build_event(
     response: CompanionResponse,
     candidates: Sequence[RankedCandidate],
     candidate_ids: Sequence[int],
+    candidate_refs: Sequence[TrackRef] = (),
     latency_ms: float,
     config_fingerprint: str | None = None,
     force_local: bool = False,
@@ -100,6 +102,8 @@ def build_event(
         diversity=diversity,
         candidate_ids=tuple(candidate_ids),
         final_ids=final_ids,
+        candidate_refs=tuple(candidate_refs),
+        final_refs=tuple(candidate.track.ref for candidate in candidates),
         components=stripped,
         fallback_reason=trace.fallback_reason if trace else None,
         latency_ms=latency_ms,

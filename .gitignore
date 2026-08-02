@@ -5,8 +5,17 @@ __pycache__/
 
 # Virtual environments
 .venv/
+.venv-ml/
 env/
 venv/
+
+# Large/local FMA build inputs and outputs. The verified 300-track lite artifact
+# under data/catalogs is intentionally committed; full/model artifacts ship via
+# checksummed releases or stay in the local build workspace.
+build/
+artifacts/
+data/catalogs/fma-full*
+data/catalogs/release-cache/
 
 # Secrets — never commit real API keys
 .env

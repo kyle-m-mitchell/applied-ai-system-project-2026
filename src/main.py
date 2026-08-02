@@ -38,6 +38,12 @@ CATALOG_PATH = REPO_ROOT / "data" / "songs.csv"
 GUIDES_DIR = REPO_ROOT / "data" / "context_guides"
 CATALOG_CACHE = REPO_ROOT / "data" / "embeddings" / "catalog.json"
 QUERY_CACHE = REPO_ROOT / "data" / "embeddings" / "queries.json"
+FMA_LITE = REPO_ROOT / "data" / "catalogs" / "fma-lite.sqlite"
+FMA_LITE_MANIFEST = REPO_ROOT / "data" / "catalogs" / "fma-lite.manifest.json"
+FMA_FULL = REPO_ROOT / "artifacts" / "fma-full.sqlite"
+FMA_FULL_MANIFEST = REPO_ROOT / "artifacts" / "fma-full.manifest.json"
+FMA_RELEASE_MANIFEST = REPO_ROOT / "data" / "catalogs" / "fma-full.release-manifest.json"
+FMA_RELEASE_CACHE = REPO_ROOT / "artifacts" / "fma-release-cache.sqlite"
 EVENT_LOG = REPO_ROOT / "logs" / "events.jsonl"
 DIVIDER = "-" * 64
 
@@ -116,7 +122,10 @@ def _text_generator():
 
 
 def _build_companion(
-    *, log_events: bool = False, provider_enabled: bool = True
+    *,
+    catalog_id: str = "fma",
+    log_events: bool = False,
+    provider_enabled: bool = True,
 ) -> MusicCompanion:
     """Build the CLI's companion through the shared factory — one construction path.
 
@@ -126,23 +135,55 @@ def _build_companion(
     """
     _load_dotenv()
     allow_provider = provider_enabled and not _provider_disabled()
-    embedder = _live_embedder() if allow_provider else None
+    if catalog_id not in {"fma", "fictional"}:
+        raise ValueError("catalog_id must be 'fma' or 'fictional'")
+    # FMA deliberately uses local SQLite FTS5 + structured retrieval. A live
+    # embedding client would have no role in that catalog's implemented path.
+    embedder = _live_embedder() if allow_provider and catalog_id == "fictional" else None
     generator = _text_generator() if allow_provider else None
-    config = CompanionConfig(
-        catalog_path=str(CATALOG_PATH),
-        guides_dir=str(GUIDES_DIR),
-        catalog_cache_path=str(CATALOG_CACHE),
-        query_cache_path=str(QUERY_CACHE),
-        use_live_embedder=embedder is not None,
-        use_generator=generator is not None,
-        event_log_path=str(EVENT_LOG) if log_events else None,
-    )
+    common = {
+        "catalog_id": catalog_id,
+        "use_live_embedder": embedder is not None,
+        "use_generator": generator is not None,
+        "event_log_path": str(EVENT_LOG) if log_events else None,
+    }
+    if catalog_id == "fictional":
+        config = CompanionConfig(
+            **common,
+            catalog_path=str(CATALOG_PATH),
+            guides_dir=str(GUIDES_DIR),
+            catalog_cache_path=str(CATALOG_CACHE),
+            query_cache_path=str(QUERY_CACHE),
+        )
+    else:
+        full_available = FMA_FULL.is_file() and FMA_FULL_MANIFEST.is_file()
+        release_url = os.environ.get("CADENCE_FMA_RELEASE_URL")
+        release_available = bool(release_url and FMA_RELEASE_MANIFEST.is_file())
+        config = CompanionConfig(
+            **common,
+            fma_local_full_path=str(FMA_FULL) if full_available else None,
+            fma_local_full_manifest_path=(
+                str(FMA_FULL_MANIFEST) if full_available else None
+            ),
+            fma_lite_path=str(FMA_LITE),
+            fma_lite_manifest_path=str(FMA_LITE_MANIFEST),
+            fma_release_url=release_url if release_available else None,
+            fma_release_manifest_path=(
+                str(FMA_RELEASE_MANIFEST) if release_available else None
+            ),
+            fma_release_cache_path=(
+                str(FMA_RELEASE_CACHE) if release_available else None
+            ),
+        )
     deps = CompanionDeps(live_embedder=embedder, generator=generator)
     return build_companion(config, deps)
 
 
 def print_companion_response(
-    response: CompanionResponse, *, show_trace: bool = False
+    response: CompanionResponse,
+    *,
+    show_trace: bool = False,
+    catalog_descriptor=None,
 ) -> None:
     """Print Cadence's voiced response plus a compact, privacy-safe trace line.
 
@@ -155,6 +196,15 @@ def print_companion_response(
     else:
         print("\n🎧  Cadence\n")
     print(response.message)
+
+    if catalog_descriptor is not None:
+        edition = catalog_descriptor.edition.value.replace("_", " ").title()
+        label = (
+            "Fictional"
+            if catalog_descriptor.catalog_id == "fictional"
+            else f"FMA {edition}"
+        )
+        print(f"\nCatalog: {label} · {catalog_descriptor.accepted_count:,} tracks")
 
     trace = response.trace
     result = response.retrieval
@@ -191,22 +241,35 @@ def run_structured_demo() -> None:
 
 
 def main() -> None:
-    flags = {"--trace", "--log", "--local-only"}
-    args = [arg for arg in sys.argv[1:] if arg not in flags]
-    show_trace = "--trace" in sys.argv[1:]
-    log_events = "--log" in sys.argv[1:]  # opt-in privacy-safe receipt (see logs/events.jsonl)
-    local_only = "--local-only" in sys.argv[1:]
-    if args:
-        query = " ".join(args)
-        companion = _build_companion(
-            log_events=log_events, provider_enabled=not local_only
-        )
-        print_companion_response(
-            companion.respond(query, policy=ExecutionPolicy(force_local=local_only)),
-            show_trace=show_trace,
-        )
-    else:
+    raw_args = list(sys.argv[1:])
+    show_trace = "--trace" in raw_args
+    log_events = "--log" in raw_args  # opt-in privacy-safe receipt (see logs/events.jsonl)
+    local_only = "--local-only" in raw_args
+    structured_demo = "--structured-demo" in raw_args
+    catalog_id = "fma"
+    if "--catalog" in raw_args:
+        position = raw_args.index("--catalog")
+        if position + 1 >= len(raw_args) or raw_args[position + 1] not in {"fma", "fictional"}:
+            raise SystemExit("--catalog requires 'fma' or 'fictional'")
+        catalog_id = raw_args[position + 1]
+        del raw_args[position : position + 2]
+    flags = {"--trace", "--log", "--local-only", "--structured-demo"}
+    args = [arg for arg in raw_args if arg not in flags]
+    if structured_demo:
         run_structured_demo()
+        return
+
+    query = " ".join(args) if args else "calm independent music"
+    companion = _build_companion(
+        catalog_id=catalog_id,
+        log_events=log_events,
+        provider_enabled=not local_only,
+    )
+    print_companion_response(
+        companion.respond(query, policy=ExecutionPolicy(force_local=local_only)),
+        show_trace=show_trace,
+        catalog_descriptor=companion.catalog_descriptor,
+    )
 
 
 if __name__ == "__main__":

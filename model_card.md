@@ -1,401 +1,343 @@
-# 🎧 Model Card: Cadence Applied-AI Music Companion
+# Cadence Model and AI System Card
 
-## 1. Model Name  
+Version: **Phase 5 / 2026-08-02**  
+Status: **modeling framework implemented and fixture-tested; real FMA target reports pending a pinned-source build**
 
-**TasteTether 1.0** is the deterministic content-based baseline. **Cadence** is
-the implemented applied-AI system built around it: guarded natural language,
-multi-source retrieval, structured-preference fusion, bounded agent actions,
-grounded voice, evaluation, and a Streamlit listening room.
+## 1. What this card covers
 
----
+Cadence is a hybrid system, not one monolithic model. This card documents every
+AI-like component and its authority:
 
-## 2. Intended Use  
+| Component | Technique | May decide | Must not decide |
+|---|---|---|---|
+| Original scorer | deterministic weighted content score | fictional catalog ordering | invent fields or IDs |
+| Fictional retriever | TF-IDF + optional cached/live embeddings | candidate evidence from authored catalog/guides | bypass hard constraints |
+| FMA retriever | SQLite FTS5 + structured SQL + rank fusion | candidate pool from stored evidence | fabricate absent text/features |
+| Specialized feature models | offline target-specific HGB + uncertainty gates | baked estimates for six missing numeric fields after release/row gates | force a value, overwrite Echo Nest, run in serving |
+| Mood profile | deterministic sigmoid quadrant math | experimental scores/label when both axes exist | write an authored FMA mood or claim human truth |
+| Cadence voice | deterministic template + optional bounded Gemini selection | fact-free response framing | create recommendation facts or rank tracks |
+| Research agent | exact MusicBrainz identity + optional Gemini grounded search | up to three cited post-rank claims | change eligibility/order or persist catalog truth |
 
-The original recommender gathers a structured music taste profile and suggests
-songs that match it. Cadence adds a guarded natural-language and Streamlit path
-for describing a moment, inspecting why tracks were selected, and reversibly
-refining the result. It is an educational and portfolio system over a fictional
-catalog, not a production streaming service or a source of licensed playback.
+## 2. Intended use
 
----
+Cadence is an educational and portfolio music-discovery companion. It demonstrates
+natural-language intent, RAG, specialized modeling, agents/tool calls,
+provenance, uncertainty, abstention, guardrails, evaluation, and human review in
+one integrated product.
 
-## 3. How the Model Works  
+The FMA path is intended for transparent independent-music metadata discovery.
+The fictional path is an immutable regression/demo control. Neither supplies
+audio playback or a licensed commercial streaming service.
 
-Real world recommenders tend to be hybrids of content-based filtering and
-collaborative filtering. Content based filtering compares a single user's
-preference with the attributes of an item to suggest content to the user. My
-simulation is content based. It scores each song by how closely its attributes
-match a user's taste profile, using no data about other users. It prioritizes
-genre most heavily, then mood, then how close a song's numeric qualities are to
-what the user wants. Genre is *provably* the decisive signal: its weight (4.0)
-is set to exceed everything else combined (mood 1.5 + numeric budget 2.0 = 3.5),
-so an exact-genre song always outranks any unrelated-genre song while the mood
-and numeric features fine-tune the ranking within a genre.
+## 3. Original deterministic baseline
 
-In plain terms, each song earns points for what it gets right: a matching genre
-or mood adds a fixed number of points, and each numeric quality (energy,
-valence, danceability, acousticness) adds more points the closer it is to the
-user's target. Genre is worth the most points, mood a little less, and the
-numeric qualities the least. Every song's points are added into one total score,
-and the songs are then ranked from highest to lowest so the best matches appear
-first.
+The base system compares a structured request with fictional track genre, mood,
+energy, valence, danceability, acousticness, and tempo. It is intentionally
+readable and local. The fictional catalog later grew from 20 to 200 tracks but
+preserved the original records and behavior.
 
-**Song features used:** genre, mood, energy, acousticness, valence,
-danceability, tempo.
+The accepted evaluation control is:
 
-**UserProfile preferences considered:** favorite_genre, favorite_mood,
-target_energy, target_acousticness, target_valence, target_danceability,
-target_tempo (in BPM). Genre and mood are matched case-insensitively.
+| Metric | Accepted value |
+|---|---:|
+| Required hard-constraint adherence | 100% |
+| Average genre satisfaction | 0.863 |
 
-Every preference has exactly one song attribute it's compared against.
+Phase 5 must preserve this control exactly. FMA performance is reported separately
+and can never redefine the baseline after the fact.
 
-Cadence's applied-AI path wraps that trusted foundation rather than replacing
-it. A bounded request flows through input/privacy guard → typed intent → catalog
-and context-guide retrieval → optional semantic embeddings → structured/text
-fusion → relevance-safe MMR diversity → grounding evaluation → deterministic or
-guarded selection from approved Cadence microcopy. The Streamlit interface submits to this same
-`MusicCompanion` service; it does not implement a second ranking algorithm.
+## 4. Specialized FMA feature models
 
----
+### 4.1 Goal
 
-## 4. Data  
+FMA has 518 Librosa-derived statistics for nearly all tracks but Echo Nest audio
+features for a much smaller overlap. Cadence learns compatibility mappings from
+the Librosa statistics to six Echo Nest-computed targets:
 
-The authoritative catalog now contains **200 fictional songs across 20 genres,
-with exactly 10 songs per genre**. The original 20 records and their original
-values are preserved in the first 20 IDs and in a separate immutable legacy
-snapshot. House, soul, and punk were added to the original 17 genres.
+- energy
+- valence
+- acousticness
+- danceability
+- tempo BPM
+- instrumentalness
 
-Each record contains the original title, artist, genre, mood, and five numeric
-audio-style fields (energy, tempo, valence, danceability, acousticness). Feature
-2 adds a natural-language description, tags, listening contexts, instruments,
-instrumental and explicit flags, and a decade-style era label. These fields are
-validated and now ground Cadence's TF-IDF, context-guide, and semantic retrieval
-paths; the original deterministic score still uses only the original scoring
-fields.
+The goal is not to discover objective truth. It is to extend the availability of
+a clearly labeled, Echo Nest-compatible audio-character estimate when evidence
+supports doing so.
 
-The catalog is synthetic and reproducibly generated from curated genre
-profiles. Its values are authored rather than measured from audio, so they are
-appropriate for classroom software tests but not factual music analysis. There
-are still no lyrics, language, real popularity, or listener histories, which is
-why a collaborative “people like you” approach is not possible. Full provenance,
-validation, review status, and limitations are in the
-[Catalog Data Card](docs/CATALOG_DATA_CARD.md).
+### 4.2 Data and leakage control
 
----
+The offline prepared table contains a positive `track_id`, normalized artist,
+Librosa input columns, and target columns with Echo Nest values or missing values.
+Target columns and identity columns are forbidden as model inputs.
 
-## 5. Strengths  
+Artists are deterministically split:
 
-TasteTether does three things well:
+- 70% training artists;
+- 15% calibration artists;
+- 15% locked-test artists.
 
-**Coherent picks when a taste is clear.** When a profile's dials agree — a genre,
-a mood, and sound targets that all point the same way — the results form a tight,
-sensible cluster. The *Workout* profile (edm + energetic + loud/fast) returns edm
-on top followed by its closest pop and synthwave cousins in energy order, and the
-*Study* profile (lofi + chill + calm/quiet) returns a clean run of lofi and
-mellow tracks. In these everyday cases the recommendations match intuition
-(see Section 7).
+All tracks by one normalized artist stay in one split. This reduces leakage from
+creator-specific sound. It does not guarantee that related artists, releases, or
+recording conditions are independent.
 
-**Graceful fallback to "cousin" genres and moods.** Instead of collapsing to
-nothing when exact matches run out, the similarity families award partial credit
-to related genres and moods, so a lofi listener sees ambient and jazz before
-anything jarring. The list degrades smoothly from exact matches, to close
-cousins, to everything else.
+### 4.3 Models and baselines
 
-**Simple, fast, and needs no training data.** The whole model is a weighted sum a
-person can read top to bottom and adjust by hand. It runs instantly on the
-catalog with no user history, no training step, and no outside services, which
-makes it easy to reason about and easy to test.
+Each target is independent:
 
-**The applied system remains inspectable and useful offline.** Cadence exposes
-interpreted intent, retrieval provenance, component scores, hard constraints,
-and operating mode in the same Streamlit workflow that produces the result. A
-backend execution policy blocks provider calls in local-only mode, sensitive
-routing stays provider-free through later refinements, and cached/local fallback
-paths preserve useful recommendations when cloud assistance is absent.
+- `DummyRegressor(strategy="median")` is the no-signal baseline;
+- Ridge is the simple linear baseline;
+- `HistGradientBoostingRegressor` predicts the point value;
+- two histogram-gradient-boosting quantile models predict the 10th and 90th
+  percentiles.
 
----
+Input median/IQR statistics support OOD distance. Missing input fractions,
+non-finite values, domain limits, prediction ranges, and interval width contribute
+to row-level abstention.
 
-## 6. Limitations and Bias
+### 4.4 Global release gates
 
-**Discovered weakness — genre lock-in and authored categories.** Genre is
-weighted 4.0 specifically so an exact-genre match always outranks any unrelated
-genre. This protects an explicit preference but locks the top of the list into a
-hand-drawn neighborhood and makes cross-genre discovery difficult. The balanced
-catalog removes the baseline problem where most genres had only one record, but
-it does not make genre families fair or objective. Family sizes still differ,
-and assigning house to `pop_elec`, punk to `rock_heavy`, or soul to `groove`
-reflects designer judgment.
+A target is globally released only if the locked test shows:
 
-The richer synthetic metadata adds a second risk: descriptions and contexts can
-encode stereotypes or overstate what a fictional track is “for.” Embeddings will
-make those labels easier to retrieve, not more factual. Automated validation can
-prove ranges, uniqueness, and schema integrity, but a person must still review
-language, cultural assumptions, and outliers. Match strength helps expose weak
-fit, but it is request-relative and must not be presented as calibrated
-confidence.
+1. MAE at least 5% better than the median dummy;
+2. MAE at least 5% better than Ridge;
+3. 10th–90th interval coverage between 75% and 90%;
+4. at least 30% retained coverage for otherwise-missing rows; and
+5. a calibrated interval-width threshold.
 
----
+Calibration chooses the widest accepted interval compatible with retained MAE no
+worse than `0.15` for unit targets or `15 BPM` for tempo. A failed target emits
+null predictions with `released=false`.
 
-## 7. Historical Baseline Evaluation
+### 4.5 Row-level abstention
 
-The experiments below were recorded against the original 20-track baseline and
-are preserved because they motivated later changes. They are not current
-200-track acceptance results. The current system has **216 passing offline
-tests**, including service, retrieval, structured fusion, guardrails, fallback,
-bounded-agent, voice, evaluation-harness, refinement, and Streamlit AppTest
-coverage. The committed evaluation report card passes its gate with **100% hard-
-constraint adherence** and **0.863 average genre satisfaction**.
+Even a globally released target abstains when one row has:
 
-**Specialized behavior — Cadence's voice.** The optional model is a bounded tone
-selector, not a factual narrator. Given the guarded request, it must copy exactly
-one application-owned, fact-free line from `APPROVED_FRAMINGS`; the application
-renders all track facts. Exact-membership and safety checks reject any new prose,
-name, description, link, markup, persona claim, or unsafe language, then use the
-deterministic baseline. This is constrained prompting, not fine-tuning.
+- more than 20% missing model inputs;
+- non-finite point/interval values;
+- point or interval outside the allowed feature range;
+- OOD score above the calibration threshold; or
+- interval width above the calibrated threshold.
 
-| Baseline (template) | Cadence (model-selected approved line) |
-|---|---|
-| `Here are a few picks (instrumental, clean) for that:` | `Here's a thoughtfully chosen set for the moment you described.` |
+A retained estimate stores point, confidence, lower/upper interval, and model
+version. Confidence is based on interval width and weights that feature's
+structured ranking contribution. An abstention remains `None` and changes neither
+score numerator nor denominator.
 
-Both are followed by the identical, validated track list.
+### 4.6 Real model result table
 
-**Input-privacy and safety (Feature 5).** Natural-language queries pass through a
-deterministic guard before anything else: it redacts emails, phone numbers, and
-key-like secrets (which are never sent to the provider or logged), strips
-prompt-injection directives, and routes clear crisis language to a brief,
-non-clinical safe response that points to real help. Sensitive queries are
-answered through a provider-free retriever and deterministic voice, and that
-restriction remains sticky through refinements. The UI also exposes a local-only
-control backed by `ExecutionPolicy`, not merely a display badge. The guard is a
-coarse regex net, not a perfect classifier, so it deliberately errs toward
-redacting or staying local.
+This table must be filled from the generated JSON report—not by hand. At the time
+of this card, the real pinned FMA matrix has not been trained in this repository,
+so no target is claimed as released.
 
-**Phase 4 product evaluation.** The Streamlit UI calls the same
-`MusicCompanion` as the CLI and evaluator. Its Taste Console submits one typed
-transaction only when the listener presses **Remix**, while quick actions and
-guarded follow-ups re-enter the same retrieve → fuse → diversify → evaluate
-→ voice pipeline. Immutable session snapshots support exact undo; clarify,
-no-match, and safe-response outcomes do not destroy the last working set. A
-request-local `PipelineReceipt` distinguishes cached, live, and local embedding
-sources and records network use without storing prompt text. Automated AppTest
-coverage verifies normal, privacy, fallback, refinement, undo, and developer
-flows. Connected-browser desktop/mobile/accessibility review remains pending.
+| Target | Dummy MAE | Ridge MAE | HGB MAE | R² | Interval coverage | Retained coverage | Released |
+|---|---:|---:|---:|---:|---:|---:|---|
+| energy | pending | pending | pending | pending | pending | pending | **not claimed** |
+| valence | pending | pending | pending | pending | pending | pending | **not claimed** |
+| acousticness | pending | pending | pending | pending | pending | pending | **not claimed** |
+| danceability | pending | pending | pending | pending | pending | pending | **not claimed** |
+| tempo BPM | pending | pending | pending | pending | pending | pending | **not claimed** |
+| instrumentalness | pending | pending | pending | pending | pending | pending | **not claimed** |
 
-### Everyday profiles I tested
+The synthetic tests prove deterministic artist grouping, baseline comparison,
+gate shape, missing-target-only export, and strict deterministic JSON. They do not
+measure real FMA quality.
 
-Think of a taste profile as a set of dials: one for **genre**, one for **mood**,
-and five sliders for the sound itself (energy, acousticness, valence,
-danceability, and tempo). To see what each dial actually *does*, I tested the
-profiles in **pairs**, changing only one dial at a time and leaving everything
-else identical. That way, any change in the recommendations can only be caused
-by the one dial I moved.
+### 4.7 Baseline vs specialized behavior
 
-| Nickname | Genre | Mood | Sliders | #1 recommendation |
-|---|---|---|---|---|
-| **Study** | lofi | chill | calm & quiet (low energy, 75 bpm, acoustic) | Library Rain *(lofi)* |
-| **Study→Metal** | metal | chill | calm & quiet *(same as Study)* | Iron Verdict *(metal)* |
-| **Study→Energetic** | lofi | energetic | calm & quiet *(same as Study)* | Library Rain *(lofi)* |
-| **Study→Hype** | lofi | chill | loud & fast (high energy, 135 bpm, danceable) | Midnight Coding *(lofi)* |
-| **Workout** | edm | energetic | loud & fast | Neon Cathedral *(edm)* |
+The measurable comparison is intentionally three-way:
 
-**Pair 1 — change only the genre (Study vs Study→Metal): what does the "genre"
-dial control?** I kept the mood (chill) and every slider (quiet, slow, acoustic)
-exactly the same and changed a single word, lofi → metal. The whole list flipped:
-a calm lofi track on top became a loud metal track on top. The surprising part is
-that the metal song that comes back, *Iron Verdict*, is loud, fast, and
-"aggressive" — the exact opposite of the quiet, chill settings I asked for, yet
-it still wins.
-That makes sense: the genre dial outranks everything else combined, so it decides
-the *neighborhood* you get recommended from even when your other dials disagree
-with it. This is valid behavior (genre is meant to be decisive), but it also
-shows the profile was asking for two contradictory things and genre quietly won.
-Notice too that the metal list is much less confident (top score 5.11 vs 7.40 for
-the lofi list) and its runners-up are actually the same quiet lofi songs — because
-metal has only one song and one close cousin (rock), the list runs out of real
-matches almost immediately.
+| Case | Baseline catalog behavior | Specialized behavior | Ranking effect |
+|---|---|---|---|
+| Echo Nest target exists | use `echonest_computed` value | preserve it; never overwrite | full trustworthy feature contribution |
+| Target missing; model and row pass | feature unavailable | bake `model_estimated` value + confidence + interval | contribution scaled by calibrated confidence |
+| Target missing; model or row fails | feature unavailable | abstain (`None`, `released=false`) | no reward and no penalty |
 
-**Pair 2 — change only the mood (Study vs Study→Energetic): what does the "mood"
-dial control?** I kept the genre (lofi) and the sliders the same and switched the
-mood from chill to energetic. Surprisingly, I got back the *exact same three lofi
-songs*, just with lower scores and a slightly shuffled order. The reason is that
-none of the lofi songs are "energetic" (they are chill or focused), so asking for
-an energetic mood simply removed the mood bonus from all of them — and nobody new
-could take their place because genre still dominates. One telling detail: in the
-chill version *Midnight Coding* was #2, but in the energetic version it slipped to
-#3 while *Focus Flow* rose to #2. That happened because Midnight Coding lost a full
-chill-match bonus (1.50 points) while Focus Flow only lost a smaller cousin bonus
-(0.75), so the near-ties reshuffled. Takeaway: the mood dial fine-tunes the
-emotional flavor *within* your genre and breaks ties — but if your genre has no
-songs in that mood, asking for it barely changes *who* you get. It is valid, but
-it degrades quietly: it never tells you "there are no energetic lofi songs," it
-just hands back the chill ones with a smaller number.
+A real report must add the quantitative before/after: target-specific MAE versus
+both baselines and percentage of otherwise-missing tracks retained. That generated
+comparison is the release evidence for the specialized-behavior stretch feature.
 
-**Pair 3 — change only the sliders (Study vs Study→Hype): what do the sound
-sliders control?** I kept the genre (lofi) and mood (chill) and flipped every
-slider from calm/quiet/slow to loud/fast/danceable, a workout setting. I *still*
-got quiet lofi study music. The only thing that changed was that #1 and #2 traded
-places: *Midnight Coding* (a hair louder at energy 0.42 and 78 bpm) edged ahead of
-the very quiet *Library Rain* (0.35, 72 bpm), because when you ask for a loud song
-the slightly-louder track is the closer match. This makes sense: the sliders are
-*fine-tuning knobs, not a steering wheel*. They decide which lofi song rises to the
-top; they cannot get you out of lofi. It is valid by design, but a listener who
-cranks energy to the maximum expecting gym music — while leaving the genre on
-lofi — will be surprised to still receive study beats.
+## 5. Experimental mood profile
 
-**Pair 4 — change everything (Study vs Workout): does it hold together for a
-consistent persona?** Here all three dials agree: a loud electronic genre (edm),
-an energetic mood, and loud/fast sliders. The result is a tidy, sensible cluster,
-edm on top, then its close pop and synthwave cousins, ordered from most to least
-energetic. Compared with the quiet, coherent lofi cluster from Study, this shows
-the recommender works cleanly when your preferences all point the same direction.
-It is the mirror image of Pair 1's metal profile, where the dials fought each
-other and produced a jumbled, low-confidence list. So the system is most
-trustworthy when genre, mood, and sliders agree, and least trustworthy when they
-contradict — in which case it silently sides with genre.
+FMA does not supply an authored track-level mood field. Cadence derives a separate
+profile only when energy and valence exist:
 
-**What was surprising, in one line.** Two of the three preference types, mood and
-the sound sliders, mostly *cannot change who you get recommended*; only the genre
-dial can. Moving them just changes the scores and the fine ordering. In plain
-terms, a profile really means "pick a genre, then gently sort the songs inside
-it," which is worth knowing before trusting the mood and slider settings to steer
-the results.
+```text
+high_arousal = sigmoid((energy - 0.5) / 0.15)
+positive     = sigmoid((valence - 0.5) / 0.15)
 
-### Adversarial edge-case profiles
-
-I also ran a set of **adversarial edge-case profiles** against the original
-20-song catalog to find where the scoring logic breaks. Each block below is
-historical output from `recommend_songs`.
-
-**Finding 1 — "genre is decisive" holds only conditionally.** Genre is weighted
-3.0, but every other signal combined sums to 5.0 (mood 1.5 + numeric 3.5). A
-coherent-looking user ("lofi genre, aggressive mood") gets a **metal** track as
-their #1 pick, ahead of every lofi song, because the intruder collects mood +
-numeric points that exceed the exact-genre song's total. Genre only "wins" when
-no off-genre song can rescue itself that way (profile A).
-
-```
-A) genre=lofi, mood=romantic, energy=0.97, acousticness=0.03, valence=0.30, danceability=0.42
-  1. Midnight Coding      [lofi/chill]        score=4.91
-  2. Focus Flow           [lofi/focused]      score=4.80
-  3. Library Rain         [lofi/chill]        score=4.67
-
-B) genre=lofi, mood=aggressive, energy=0.97, acousticness=0.03, valence=0.30, danceability=0.42
-  1. Iron Verdict         [metal/aggressive]  score=5.00   <-- wrong genre wins
-  2. Midnight Coding      [lofi/chill]        score=4.91
-  3. Focus Flow           [lofi/focused]      score=4.80
+upbeat  = high_arousal       × positive
+calm    = (1 - high_arousal) × positive
+intense = high_arousal       × (1 - positive)
+somber  = (1 - high_arousal) × (1 - positive)
 ```
 
-**Finding 2 — no input validation.** Out-of-range numeric targets (typos) clamp
-to 0 silently; the model drops all numeric signal and falls back to
-categorical-only with no error or warning.
+The scores sum to one. If the highest score leads the second by less than `0.10`,
+the label is omitted. Input evidence confidence propagates as the minimum known
+axis confidence; a decisive quadrant does not manufacture confidence from
+uncertain inputs.
 
+Queries map transparently to underlying axes:
+
+| Query | Energy direction | Valence direction |
+|---|---|---|
+| upbeat | high | high |
+| calm | low | high |
+| intense | high | low |
+| somber | low | low |
+
+Raw trustworthy axes drive ranking. The quadrant is an explanation/index aid and
+is always marked experimental.
+
+## 6. Human calibration status
+
+The local harness creates a deterministic, genre-stratified 300-track sample with
+prediction fields removed. A human labels valence, arousal, quadrant, and
+confidence. Primary and independent-audit roles are distinct; duplicate
+rater/track judgments are rejected.
+
+Current status: **harness implemented; human calibration not claimed**.
+
+The target is 300 primary-labeled tracks and 60 independent audit pairs. A future
+promotion decision also needs predeclared agreement thresholds and human review.
+Only bounded temperature/tag-weight calibration is eligible. Until then manifests
+remain `experimental`.
+
+DEAM is CC BY-NC and runs only through the isolated acknowledged benchmark. Its
+data, metrics, weights, and thresholds have zero production effect.
+
+## 7. Retrieval and ranking behavior
+
+### Fictional control
+
+TF-IDF/catalog + versioned context guides, optional cached/live semantic
+embeddings, structured percentile fusion, and MMR preserve the accepted behavior.
+Context guides expand controlled vocabulary and are evidence, not tracks.
+
+### FMA
+
+FTS5 and structured SQL each generate candidates independently. Weighted
+reciprocal-rank fusion combines the union. Structured scoring:
+
+- uses only populated evidence;
+- weights estimates by confidence;
+- does not let missing features weaken or strengthen a match;
+- treats “more instrumental” as soft numeric instrumentalness;
+- rejects unsupported clean-only/instrumental-only hard requirements.
+
+MMR cannot count missing mood as a match. The grounding evaluator requires valid
+catalog IDs, uniqueness, constraint satisfaction, and evidence actually used.
+
+## 8. Cadence voice specialization
+
+Cadence's personality is warm, observant, tactful, concise, and uncertainty-aware.
+The deterministic renderer is the baseline. Optional Gemini does not freely
+generate track facts; it can only select exact application-owned framing. Any
+non-allowlisted, unsafe, malformed, or failed provider response falls back to the
+template.
+
+Baseline vs specialized voice:
+
+```text
+Baseline: "Here are a few picks for that:"
+Specialized: a short approved Cadence line chosen for the bounded action/tone.
+Track list and factual cards: identical in both cases.
 ```
-C) genre=lofi, mood=chill, energy=9000, acousticness=-5, valence=50, danceability=1e9
-  1. Midnight Coding      [lofi/chill]     score=4.50   (numeric contribution: 0)
-  2. Library Rain         [lofi/chill]     score=4.50
-  3. Focus Flow           [lofi/focused]   score=3.75
-```
 
-**Finding 3 — categorical matching is case-sensitive.** `"Lofi"` != `"lofi"`, so
-capitalizing the favorite silently discards genre and mood; ranking collapses to
-numerics and a **folk** song ties the top lofi track.
+Thus style may change while recommendation authority remains deterministic.
 
-```
-D) genre=Lofi, mood=Chill, energy=0.40, acousticness=0.80, valence=0.55, danceability=0.40
-  1. Focus Flow           [lofi/focused]   score=3.34
-  2. Midnight Coding      [lofi/chill]     score=3.27
-  3. Paper Compass        [folk/hopeful]   score=3.27   <-- folk ties lofi
-```
+## 9. Post-ranking research model
 
-**Finding 4 — no "nothing matches" signal.** When nothing matches, every song
-scores 0.00 and the top picks are just the lowest-`id` songs in catalog order.
-An empty profile is indistinguishable from a completely wrong one.
+Research starts only after a human selects one recommended track. MusicBrainz must
+resolve exactly one normalized title+artist recording identity. Gemini grounded
+search receives that resolved identity, not listener context.
 
-```
-E) genre=polka, mood=spicy, energy=500, acousticness=500, valence=500, danceability=500
-  1. Sunrise City         [pop/happy]      score=0.00
-  2. Midnight Coding      [lofi/chill]     score=0.00
-  3. Storm Runner         [rock/intense]   score=0.00
+Publication requires:
 
-F) {}  (empty profile)  -> identical output to E, i.e. plain id order
-```
+- no more than three short claims;
+- structured grounding support for every claim;
+- citation IDs that resolve to safe public HTTP(S) URLs;
+- matching source-domain metadata;
+- no prompt-like page instructions;
+- bounded response size and provider time.
 
-**What surprised me.** The failure mode is always *silent* — no exception, no
-warning, just quietly wrong output. The genre-dominance guarantee I reasoned
-about in the README was really a property of this catalog's value ranges, not of
-the weights themselves. I also confirmed `tempo_bpm` was loaded but never scored,
-so a tempo-driven listener was entirely unserved.
+Ambiguity, unsafe/private URL, missing citations, injection-like text, quota,
+timeout, missing key, or invalid response uses a deterministic local summary.
+Research never changes rank, fields, mood, booleans, or stored catalog data.
 
-**Changes made in response.** I retuned the weights and re-ran the same
-profiles:
+## 10. Evaluation
 
-- Genre 3.0 → 4.0 and the numeric budget 3.5 → 2.0, enforcing
-  `W_genre > W_mood + numerics`. Findings 1 is now closed — profile B returns
-  lofi songs on top; a wrong-genre track can no longer win.
-- Genre/mood matching is now case-insensitive, closing Finding 3.
-- Tempo is now scored (target in BPM, normalized to 0–1), closing the
-  never-scored gap.
-- Strict Pydantic request contracts now reject out-of-range/NaN/infinite values
-  and empty requests, closing Finding 2 and the empty-profile half of Finding 4
-  at the public boundary.
-- A syntactically valid but unknown all-miss genre can still return zero-score
-  ID order. That needs an explicit `no_match` situation policy rather than a
-  weight change and remains under Future Work.
+Automated coverage includes:
 
----
+- contracts, unknown semantics, scoring denominator, retrieval documents, MMR,
+  evidence, and catalog capabilities;
+- safe FMA parsing, deterministic Lite selection, SQLite/FTS5, read-only access,
+  manifests, corrupt-asset fallback, and checksums;
+- artist-group split, baselines, global/row gates, intervals, OOD, deterministic
+  exports, and quadrant math;
+- prediction-hidden annotation and readiness counts;
+- exact/ambiguous/missing identity, prompt injection, unsafe URL, missing citation,
+  timeout/quota/no-key, 100% citation coverage, and local fallback;
+- fictional regression and application UI/CLI parity.
 
-## 8. Future Work  
+Real release reports must additionally publish model slices by genre/provenance,
+FMA genre/numeric satisfaction split by Echo Nest vs estimate, warm p95, open
+time, memory, artifact size, and first-download time.
 
-The implemented system now has explicit no-match behavior, directional
-preferences, relevance-safe MMR diversity, an evaluation harness, and a working
-UI. The next honest improvements are:
+## 11. Risks and limitations
 
-- **Replace synthetic breadth with provenance-first real data.** Add a
-  licensed/CC-compatible catalog adapter with field-level provenance, explicit
-  unit conversion, missing-value handling, and quarantine instead of fabricating
-  absent audio properties.
-- **Evaluate session personalization before using ratings.** The current UI
-  records a session-only fit rating but does not let it alter recommendations.
-  Any feedback signal should be modest, inspectable, resettable, and measured
-  against relevance and filter-bubble regressions before release.
-- **Expand language understanding without weakening the boundary.** The current
-  deterministic parser supports a controlled vocabulary. A provider-backed
-  structured parser could cover more phrasing only if it returns the same strict
-  contracts, passes the guard, and retains the deterministic fallback.
-- **Complete launch and human-review work.** Perform connected-browser desktop,
-  narrow-screen, keyboard, screen-reader, reduced-motion, and contrast checks;
-  deploy a provider-disabled staging build; then add rate limiting,
-  authentication where needed, retention/deletion policy, abuse monitoring, and
-  human review of catalog/context-guide language. A true ablation view also
-  requires preserving the original pre-fusion pool rather than reconstructing it
-  from final cards.
+- Echo Nest overlap may be selection-biased and is not ground truth.
+- Librosa summaries cannot encode every musical quality or cultural meaning.
+- Artist-group splitting reduces one leakage mode but not all dataset dependence.
+- A prediction interval is an empirical model interval, not a guarantee.
+- The four-quadrant mood theory is a coarse interpretation of two axes.
+- FMA metadata richness differs across artists/genres and can bias text retrieval.
+- Missing FMA lyric/instrumental booleans limit hard-filter use.
+- Research sources can be incomplete, stale, or wrong even with valid citations.
+- The UI supplies no audio, persistent profile, or collaborative signal.
+- Fixture-backed code tests do not substitute for a real pinned build or human
+  calibration.
 
-**Cloud-AI use disclosure.** When local-only is off, an uncached ordinary query
-may be sent to Google's Gemini API for embedding and grounded framing. Sensitive
-input is routed provider-free. Under the provider's applicable terms, submitted
-content may be retained or reviewed, so users should not submit secrets; Cadence
-remains fully usable without a key.
+## 12. Ethical and privacy boundaries
 
----
+- No listener prompt/history/preferences enter track research.
+- Sensitive guarded requests cannot call optional AI providers.
+- Logs contain sanitized categories, IDs, scores, modes, and tool outcomes—not raw
+  prompt text or hidden reasoning.
+- FMA source scopes, license fields, and attribution are preserved.
+- Model estimates are visible as estimates and may abstain.
+- Human labels are pseudonymous/local and hidden from public deployment.
+- DEAM remains non-commercial and isolated.
 
-## 9. Personal Reflection  
+## 13. Reproducibility
 
-The biggest thing I took away is that bias in a recommender rarely arrives as one
-dramatic decision — it hides inside small, reasonable-looking choices. Drawing the
-genre "families" by hand felt harmless, and so did working with a small catalog,
-but together they quietly produced unfair results: a lofi fan gets a rich,
-coherent list while a metal fan falls off a cliff into near-random songs, and
-nothing in the output warns anyone that it happened. Watching a single number —
-the genre weight — decide who gets a good experience and who doesn't made the
-trade-offs feel real in a way I didn't expect going in. It has changed how I look
-at the apps I use every day: behind a tidy list of "recommended for you" sit
-dozens of quiet judgment calls, and the ones that create bias are usually not the
-ones that looked risky up front.
+Runtime is local-first. The model/ETL environment is pinned separately in
+`requirements-ml.txt`. Serving reads deterministic SQLite and JSONL artifacts and
+never deserializes training estimators. Source, artifact, compressed distribution,
+schema, ETL, method, and model versions are recorded. Model and manifest JSON are
+canonicalized; predictions are sorted by track ID and feature.
 
-Building the Phase 4 UI added a second lesson: interface wording is part of
-system reliability. Calling a cached vector a live request, labeling fused
-relevance as the final MMR order, or letting a visual local-only toggle bypass the
-backend would make an otherwise correct system misleading. Treating every
-control as a typed transaction, preserving provenance in request-local receipts,
-and testing the UI against the public service made the product easier to explain
-because its claims now correspond to executable behavior.
+Reproducibility claims become valid only after two real builds produce matching
+checksums and the reports are reviewed.
+
+## 14. AI-collaboration reflection
+
+The strongest AI-assisted design suggestion was to keep FMA text candidates and
+structured candidates independent before fusion. That fixes a real recall
+boundary: sparse prose should not prevent a numeric match from entering the pool.
+
+Several attractive suggestions were rejected or corrected:
+
+- generate missing descriptions/moods with an LLM;
+- let web research score or reorder results;
+- treat Echo Nest values as observed truth;
+- let unknown clean/instrumental fields pass hard filters;
+- call a built annotation harness “human calibrated”;
+- use DEAM-derived thresholds in production despite its non-commercial boundary.
+
+Those options would make the demo look fuller while weakening evidence. The final
+design favors lineage, separate scopes, release gates, abstention, post-ranking
+research, and explicit pending claims.
+
+The project owner should revise this section in their own voice before submission,
+including one concrete debugging moment they personally understand.

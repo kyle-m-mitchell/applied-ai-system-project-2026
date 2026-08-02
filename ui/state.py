@@ -40,6 +40,7 @@ class MixSnapshot:
 class UiSession:
     """All listener state is confined to one Streamlit WebSocket session."""
 
+    catalog_id: str = "fma"
     snapshots: tuple[MixSnapshot, ...] = ()
     transient: CompanionTurn | None = None
     guard_category: GuardCategory = GuardCategory.OK
@@ -49,8 +50,14 @@ class UiSession:
         return self.snapshots[-1] if self.snapshots else None
 
 
-def start_session(turn: CompanionTurn, policy: ExecutionPolicy) -> UiSession:
+def start_session(
+    turn: CompanionTurn,
+    policy: ExecutionPolicy,
+    *,
+    catalog_id: str = "fictional",
+) -> UiSession:
     return UiSession(
+        catalog_id=catalog_id,
         snapshots=(MixSnapshot(turn=turn, policy=policy),),
         guard_category=turn.receipt.guard_category,
     )
@@ -90,7 +97,11 @@ def commit_turn(
     )
     if len(snapshots) > MAX_SNAPSHOTS:
         snapshots = (snapshots[0],) + snapshots[-(MAX_SNAPSHOTS - 1) :]
-    return UiSession(snapshots=snapshots, guard_category=guard_category)
+    return UiSession(
+        catalog_id=state.catalog_id,
+        snapshots=snapshots,
+        guard_category=guard_category,
+    )
 
 
 def dismiss_transient(state: UiSession) -> UiSession:
@@ -101,6 +112,7 @@ def undo(state: UiSession) -> UiSession:
     if len(state.snapshots) <= 1:
         return state
     return UiSession(
+        catalog_id=state.catalog_id,
         snapshots=state.snapshots[:-1],
         guard_category=state.guard_category,
     )
@@ -177,6 +189,7 @@ def describe_intent_delta(
         "danceability": "Movement",
         "acousticness": "Acoustic texture",
         "tempo_bpm": "Tempo",
+        "instrumentalness": "Instrumental character",
     }
     relation_names = {
         FeatureRelation.PREFER_LOW: "lower",

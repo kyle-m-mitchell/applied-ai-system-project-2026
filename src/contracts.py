@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import ClassVar, Self
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -43,6 +44,338 @@ class EmbeddingSource(str, Enum):
     CACHE = "cache"
     LIVE = "live"
     LOCAL = "local"  # deterministic fake/test embedder; never a network call
+
+
+class FieldOrigin(str, Enum):
+    """How one catalog field came to exist.
+
+    A value's origin is deliberately separate from the value itself. In
+    particular, an estimate produced from audio features must never become
+    indistinguishable from artist-authored metadata or an Echo Nest-computed
+    feature.
+    """
+
+    AUTHORED = "authored"
+    ARTIST_SUPPLIED = "artist_supplied"
+    FMA_METADATA = "fma_metadata"
+    LIBROSA_COMPUTED = "librosa_computed"
+    ECHONEST_COMPUTED = "echonest_computed"
+    MODEL_ESTIMATED = "model_estimated"
+    DETERMINISTIC_DERIVED = "deterministic_derived"
+    UNKNOWN = "unknown"
+
+
+class TrackRef(ContractModel):
+    """A catalog-qualified track identifier.
+
+    Local integer IDs are only unique *inside* one catalog. Persisted receipts,
+    research results, and cross-catalog UI state use this reference so FMA track
+    ``1`` can never be confused with fictional track ``1``.
+    """
+
+    catalog_id: str = Field(min_length=1, max_length=80, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    track_id: int = Field(gt=0)
+    external_id: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @field_validator("catalog_id", mode="before")
+    @classmethod
+    def normalize_catalog_id(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().lower()
+        return value
+
+    @field_validator("track_id", mode="before")
+    @classmethod
+    def reject_boolean_track_id(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("track_id must be an integer, not a boolean")
+        return value
+
+    @property
+    def source_id(self) -> str:
+        """Return the stable source ID used by retrieval evidence."""
+        return f"catalog:{self.catalog_id}:{self.track_id}"
+
+
+class FieldLineage(ContractModel):
+    """Typed provenance for one destination field on a catalog track."""
+
+    field_name: str = Field(min_length=1, max_length=80, pattern=r"^[a-z][a-z0-9_]*$")
+    origin: FieldOrigin
+    source_fields: tuple[str, ...] = Field(default=(), max_length=32)
+    method_version: str | None = Field(default=None, min_length=1, max_length=160)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    interval_low: float | None = None
+    interval_high: float | None = None
+
+    @field_validator("source_fields", mode="before")
+    @classmethod
+    def normalize_source_fields(cls, value: object) -> tuple[str, ...]:
+        if isinstance(value, (str, bytes)) or value is None:
+            raise ValueError("source_fields must be a sequence of field names")
+        try:
+            fields = tuple(str(item).strip() for item in value)  # type: ignore[arg-type]
+        except TypeError as exc:
+            raise ValueError("source_fields must be a sequence of field names") from exc
+        if any(not field for field in fields):
+            raise ValueError("source_fields cannot contain empty values")
+        if len(fields) != len(set(fields)):
+            raise ValueError("source_fields cannot contain duplicates")
+        return fields
+
+    @model_validator(mode="after")
+    def validate_provenance(self) -> Self:
+        if (self.interval_low is None) != (self.interval_high is None):
+            raise ValueError("prediction interval requires both low and high")
+        if (
+            self.interval_low is not None
+            and self.interval_high is not None
+            and self.interval_low > self.interval_high
+        ):
+            raise ValueError("prediction interval low must be <= high")
+        if self.origin is FieldOrigin.MODEL_ESTIMATED:
+            if self.method_version is None:
+                raise ValueError("model-estimated lineage requires method_version")
+            if self.confidence is None:
+                raise ValueError("model-estimated lineage requires confidence")
+        return self
+
+    @property
+    def destination_field(self) -> str:
+        """Readable alias matching the provenance concept in the data card."""
+        return self.field_name
+
+
+class MoodQuadrant(str, Enum):
+    """Cadence's experimental valence/arousal mood vocabulary."""
+
+    UPBEAT = "upbeat"
+    CALM = "calm"
+    INTENSE = "intense"
+    SOMBER = "somber"
+
+
+class MoodProfile(ContractModel):
+    """A derived mood distribution; never an authored catalog mood."""
+
+    upbeat: float = Field(ge=0.0, le=1.0)
+    calm: float = Field(ge=0.0, le=1.0)
+    intense: float = Field(ge=0.0, le=1.0)
+    somber: float = Field(ge=0.0, le=1.0)
+    label: MoodQuadrant | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    method_version: str = Field(
+        default="cadence-va-quadrant-v1", min_length=1, max_length=160
+    )
+    experimental: bool = True
+
+    @model_validator(mode="after")
+    def validate_distribution(self) -> Self:
+        scores = {
+            MoodQuadrant.UPBEAT: self.upbeat,
+            MoodQuadrant.CALM: self.calm,
+            MoodQuadrant.INTENSE: self.intense,
+            MoodQuadrant.SOMBER: self.somber,
+        }
+        if abs(sum(scores.values()) - 1.0) > 1e-6:
+            raise ValueError("mood profile scores must sum to 1")
+        if self.label is not None and scores[self.label] != max(scores.values()):
+            raise ValueError("mood profile label must name a highest-scoring quadrant")
+        return self
+
+
+class CatalogEdition(str, Enum):
+    """Which distributable edition backs a catalog."""
+
+    FICTIONAL = "fictional"
+    FULL = "full"
+    LITE = "lite"
+
+
+class CatalogCapabilities(ContractModel):
+    """Features a catalog can support without guessing."""
+
+    supported_filters: tuple[str, ...] = ()
+    supported_features: tuple[str, ...] = ()
+    retrieval_methods: tuple[str, ...] = ()
+    context_guides: bool = False
+    research: bool = False
+
+    @field_validator("supported_filters", "supported_features", "retrieval_methods", mode="before")
+    @classmethod
+    def normalize_capability_names(cls, value: object) -> tuple[str, ...]:
+        if isinstance(value, (str, bytes)) or value is None:
+            raise ValueError("capability names must be a sequence of strings")
+        try:
+            names = tuple(" ".join(str(item).split()).lower() for item in value)  # type: ignore[arg-type]
+        except TypeError as exc:
+            raise ValueError("capability names must be a sequence of strings") from exc
+        if any(not name for name in names):
+            raise ValueError("capability names cannot be empty")
+        if len(names) != len(set(names)):
+            raise ValueError("capability names cannot contain duplicates")
+        return names
+
+    def supports_filter(self, name: str) -> bool:
+        """Return whether a hard filter is evidenced by this catalog."""
+        return name.strip().lower() in self.supported_filters
+
+
+class FieldCoverage(ContractModel):
+    """Coverage of one field in a concrete catalog artifact."""
+
+    field_name: str = Field(min_length=1, max_length=80)
+    ratio: float = Field(ge=0.0, le=1.0)
+
+
+class CatalogDescriptor(ContractModel):
+    """Auditable identity, coverage, and capabilities for one artifact."""
+
+    catalog_id: str = Field(min_length=1, max_length=80, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    artifact_id: str = Field(min_length=1, max_length=200)
+    edition: CatalogEdition
+    schema_version: str = Field(min_length=1, max_length=80)
+    etl_version: str = Field(min_length=1, max_length=80)
+    source_checksum: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    artifact_checksum: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    accepted_count: int = Field(ge=0)
+    quarantined_count: int = Field(default=0, ge=0)
+    licenses: tuple[str, ...] = ()
+    attribution: tuple[str, ...] = ()
+    field_coverage: tuple[FieldCoverage, ...] = ()
+    capabilities: CatalogCapabilities = CatalogCapabilities()
+    calibration_status: str = Field(default="not_applicable", min_length=1, max_length=80)
+
+    @field_validator("catalog_id", mode="before")
+    @classmethod
+    def normalize_descriptor_catalog_id(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().lower()
+        return value
+
+    @field_validator("accepted_count", "quarantined_count", mode="before")
+    @classmethod
+    def reject_boolean_counts(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("catalog counts must be integers, not booleans")
+        return value
+
+    @field_validator("field_coverage", mode="before")
+    @classmethod
+    def accept_coverage_mapping(cls, value: object) -> object:
+        if isinstance(value, dict):
+            return tuple(
+                {"field_name": field, "ratio": ratio}
+                for field, ratio in sorted(value.items())
+            )
+        return value
+
+    @model_validator(mode="after")
+    def unique_coverage_fields(self) -> Self:
+        names = [item.field_name for item in self.field_coverage]
+        if len(names) != len(set(names)):
+            raise ValueError("field_coverage cannot contain duplicate fields")
+        return self
+
+
+class ResearchStatus(str, Enum):
+    """Bounded outcomes of optional post-ranking research."""
+
+    NOT_REQUESTED = "not_requested"
+    PUBLISHED = "published"
+    NO_MATCH = "no_match"
+    AMBIGUOUS = "ambiguous"
+    UNAVAILABLE = "unavailable"
+    FAILED = "failed"
+    LOCAL_FALLBACK = "local_fallback"
+
+
+def _validate_http_url(value: str) -> str:
+    """Accept only absolute HTTP(S) URLs with a real host and no credentials."""
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("URL must be an absolute http(s) URL")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("URL cannot contain credentials")
+    return value
+
+
+class ResearchCitation(ContractModel):
+    """One allowlisted source cited by a research claim."""
+
+    citation_id: str = Field(min_length=1, max_length=80)
+    title: str = Field(min_length=1, max_length=300)
+    url: str = Field(min_length=1, max_length=2000)
+    source_domain: str = Field(min_length=1, max_length=253)
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        return _validate_http_url(value)
+
+    @field_validator("source_domain", mode="before")
+    @classmethod
+    def normalize_source_domain(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().lower().rstrip(".")
+        return value
+
+    @model_validator(mode="after")
+    def domain_matches_url(self) -> Self:
+        hostname = (urlsplit(self.url).hostname or "").lower().rstrip(".")
+        if hostname != self.source_domain and not hostname.endswith(f".{self.source_domain}"):
+            raise ValueError("citation source_domain does not match URL host")
+        return self
+
+
+class ResearchClaim(ContractModel):
+    """One short research statement with explicit citation references."""
+
+    text: str = Field(min_length=1, max_length=500)
+    citation_ids: tuple[str, ...] = Field(min_length=1, max_length=3)
+
+
+class ResearchBrief(ContractModel):
+    """Session-only, post-ranking research that can never become catalog truth."""
+
+    track_ref: TrackRef
+    status: ResearchStatus
+    identity_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    claims: tuple[ResearchClaim, ...] = Field(default=(), max_length=3)
+    citations: tuple[ResearchCitation, ...] = Field(default=(), max_length=9)
+    source_domains: tuple[str, ...] = ()
+    provider: str | None = Field(default=None, min_length=1, max_length=120)
+    model_id: str | None = Field(default=None, min_length=1, max_length=160)
+    timestamp: str | None = Field(default=None, min_length=1, max_length=80)
+    warnings: tuple[str, ...] = ()
+
+    @field_validator("source_domains", mode="before")
+    @classmethod
+    def normalize_source_domains(cls, value: object) -> tuple[str, ...]:
+        if isinstance(value, (str, bytes)) or value is None:
+            raise ValueError("source_domains must be a sequence")
+        domains = tuple(str(item).strip().lower().rstrip(".") for item in value)  # type: ignore[arg-type]
+        if any(not domain for domain in domains):
+            raise ValueError("source_domains cannot contain empty values")
+        if len(domains) != len(set(domains)):
+            raise ValueError("source_domains cannot contain duplicates")
+        return domains
+
+    @model_validator(mode="after")
+    def validate_citation_coverage(self) -> Self:
+        citation_ids = [citation.citation_id for citation in self.citations]
+        if len(citation_ids) != len(set(citation_ids)):
+            raise ValueError("research citations cannot reuse citation_id")
+        known_ids = set(citation_ids)
+        for claim in self.claims:
+            if not set(claim.citation_ids) <= known_ids:
+                raise ValueError("research claim references an unknown citation")
+        actual_domains = tuple(dict.fromkeys(c.source_domain for c in self.citations))
+        if self.source_domains and set(self.source_domains) != set(actual_domains):
+            raise ValueError("source_domains must match citation source domains")
+        if self.status is ResearchStatus.PUBLISHED and (not self.claims or not self.citations):
+            raise ValueError("published research requires claims and citations")
+        return self
 
 
 class RecommendationRequest(ContractModel):
@@ -110,7 +443,13 @@ class RecommendationRequest(ContractModel):
 
 
 class CatalogTrack(ContractModel):
-    """Validated form of one authoritative catalog record."""
+    """Validated form of one authoritative or evidence-enriched catalog record.
+
+    Only identity is universally required. Optional values stay ``None`` when a
+    source cannot support them; ``False`` and ``0.0`` remain real, known values.
+    The fictional catalog still supplies every legacy field, so its documents
+    and scores remain byte-for-byte unchanged.
+    """
 
     NUMERIC_FIELDS: ClassVar[tuple[str, ...]] = (
         "energy",
@@ -118,33 +457,73 @@ class CatalogTrack(ContractModel):
         "valence",
         "danceability",
         "acousticness",
+        "instrumentalness",
     )
 
     id: int = Field(gt=0)
-    title: str = Field(min_length=1, max_length=200)
-    artist: str = Field(min_length=1, max_length=200)
-    genre: str = Field(min_length=1, max_length=80)
-    mood: str = Field(min_length=1, max_length=80)
-    energy: float = Field(ge=0.0, le=1.0)
-    tempo_bpm: float = Field(ge=50.0, le=200.0)
-    valence: float = Field(ge=0.0, le=1.0)
-    danceability: float = Field(ge=0.0, le=1.0)
-    acousticness: float = Field(ge=0.0, le=1.0)
-    description: str = Field(min_length=20, max_length=500)
-    tags: tuple[str, ...] = Field(min_length=2, max_length=12)
-    contexts: tuple[str, ...] = Field(min_length=2, max_length=12)
-    instruments: tuple[str, ...] = Field(min_length=1, max_length=12)
-    instrumental: bool
-    explicit: bool
-    era: str = Field(pattern=r"^(?:19|20)\d0s$")
+    catalog_id: str = Field(
+        default="fictional",
+        min_length=1,
+        max_length=80,
+        pattern=r"^[a-z0-9][a-z0-9_-]*$",
+    )
+    external_id: str | None = Field(default=None, min_length=1, max_length=200)
+    # Real FMA identity/text fields have no published source length ceiling.
+    # They are normalized during ETL; imposing the fictional catalog's legacy
+    # caps here would turn otherwise valid real tracks into runtime failures.
+    title: str = Field(min_length=1)
+    artist: str = Field(min_length=1)
+    genre: str | None = Field(default=None, min_length=1, max_length=80)
+    genres: tuple[str, ...] = Field(default=(), max_length=64)
+    mood: str | None = Field(default=None, min_length=1, max_length=80)
+    mood_profile: MoodProfile | None = None
+    energy: float | None = Field(default=None, ge=0.0, le=1.0)
+    tempo_bpm: float | None = Field(default=None, ge=50.0, le=200.0)
+    valence: float | None = Field(default=None, ge=0.0, le=1.0)
+    danceability: float | None = Field(default=None, ge=0.0, le=1.0)
+    acousticness: float | None = Field(default=None, ge=0.0, le=1.0)
+    instrumentalness: float | None = Field(default=None, ge=0.0, le=1.0)
+    description: str | None = Field(default=None, min_length=20, max_length=500)
+    tags: tuple[str, ...] = Field(default=(), max_length=64)
+    album_tags: tuple[str, ...] = Field(default=(), max_length=64)
+    artist_tags: tuple[str, ...] = Field(default=(), max_length=64)
+    contexts: tuple[str, ...] = Field(default=(), max_length=64)
+    instruments: tuple[str, ...] = Field(default=(), max_length=64)
+    instrumental: bool | None = None
+    explicit: bool | None = None
+    era: str | None = Field(default=None, pattern=r"^(?:19|20)\d0s$")
+    track_information: str | None = Field(default=None, min_length=1)
+    album_information: str | None = Field(default=None, min_length=1)
+    artist_biography: str | None = Field(default=None, min_length=1)
+    license: str | None = Field(default=None, min_length=1, max_length=500)
+    source_url: str | None = Field(default=None, min_length=1, max_length=2048)
+    track_url: str | None = Field(default=None, min_length=1, max_length=2048)
+    artist_url: str | None = Field(default=None, min_length=1, max_length=2048)
+    album_url: str | None = Field(default=None, min_length=1, max_length=2048)
+    lineage: tuple[FieldLineage, ...] = ()
+
+    @field_validator("catalog_id", mode="before")
+    @classmethod
+    def normalize_catalog_id(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().lower()
+        return value
 
     @field_validator("genre", "mood", mode="after")
     @classmethod
-    def normalize_category(cls, value: str) -> str:
+    def normalize_category(cls, value: str | None) -> str | None:
         """Store matching categories in one canonical form."""
-        return value.lower()
+        return value.lower() if value is not None else None
 
-    @field_validator("tags", "contexts", "instruments", mode="before")
+    @field_validator(
+        "genres",
+        "tags",
+        "album_tags",
+        "artist_tags",
+        "contexts",
+        "instruments",
+        mode="before",
+    )
     @classmethod
     def normalize_metadata_values(cls, value: object) -> tuple[str, ...]:
         """Require nonempty, unique metadata terms in a canonical form."""
@@ -165,8 +544,8 @@ class CatalogTrack(ContractModel):
             term = " ".join(item.split()).lower()
             if not term:
                 raise ValueError("metadata collection items cannot be empty")
-            if len(term) > 80:
-                raise ValueError("metadata collection items cannot exceed 80 characters")
+            if len(term) > 120:
+                raise ValueError("metadata collection items cannot exceed 120 characters")
             normalized.append(term)
 
         if len(normalized) != len(set(normalized)):
@@ -177,7 +556,7 @@ class CatalogTrack(ContractModel):
     @classmethod
     def require_real_booleans(cls, value: object) -> object:
         """Reject truthy strings and integers at the validated service boundary."""
-        if not isinstance(value, bool):
+        if value is not None and not isinstance(value, bool):
             raise ValueError("catalog boolean fields must be true booleans")
         return value
 
@@ -188,6 +567,27 @@ class CatalogTrack(ContractModel):
         if isinstance(value, bool):
             raise ValueError("boolean values are not valid catalog numbers")
         return value
+
+    @field_validator("source_url", "track_url", "artist_url", "album_url")
+    @classmethod
+    def validate_urls(cls, value: str | None) -> str | None:
+        return _validate_http_url(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def unique_lineage_fields(self) -> Self:
+        fields = [item.field_name for item in self.lineage]
+        if len(fields) != len(set(fields)):
+            raise ValueError("track lineage cannot contain duplicate destination fields")
+        return self
+
+    @property
+    def ref(self) -> TrackRef:
+        """Return this track's immutable, catalog-qualified identity."""
+        return TrackRef(
+            catalog_id=self.catalog_id,
+            track_id=self.id,
+            external_id=self.external_id,
+        )
 
 
 class RecommendationItem(ContractModel):
@@ -399,7 +799,12 @@ class FeatureGoal(ContractModel):
     """
 
     NUMERIC_FEATURES: ClassVar[tuple[str, ...]] = (
-        "energy", "valence", "danceability", "acousticness", "tempo_bpm",
+        "energy",
+        "valence",
+        "danceability",
+        "acousticness",
+        "tempo_bpm",
+        "instrumentalness",
     )
 
     feature: str
@@ -542,6 +947,7 @@ class AgentTrace(ContractModel):
     guard_category: GuardCategory
     intent_summary: str = ""
     retrieved_ids: tuple[int, ...] = ()
+    retrieved_refs: tuple[TrackRef, ...] = ()
     diversity_applied: bool = False
     evaluation: EvaluationReport = EvaluationReport(ok=True)
     text_evaluation: EvaluationReport | None = None
@@ -593,6 +999,8 @@ class PipelineReceipt(ContractModel):
     latency_ms: float = Field(ge=0.0)
     candidate_ids: tuple[int, ...] = ()
     final_ids: tuple[int, ...] = ()
+    candidate_refs: tuple[TrackRef, ...] = ()
+    final_refs: tuple[TrackRef, ...] = ()
     guard_category: GuardCategory
     action: CompanionAction
     force_local: bool
@@ -609,6 +1017,7 @@ class SignalRow(ContractModel):
     """One pooled candidate's per-leg ranking signals (catalog data only)."""
 
     track_id: int = Field(gt=0)
+    track_ref: TrackRef | None = None
     title: str = Field(min_length=1, max_length=200)
     text: float = Field(ge=0.0, le=1.0)
     structured: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -668,6 +1077,8 @@ class CompanionEvent(ContractModel):
     diversity: DiversityLevel = DiversityLevel.BALANCED
     candidate_ids: tuple[int, ...] = ()
     final_ids: tuple[int, ...] = ()
+    candidate_refs: tuple[TrackRef, ...] = ()
+    final_refs: tuple[TrackRef, ...] = ()
     components: tuple[ScoreComponents, ...] = ()  # parallel to final_ids; reasons stripped
     fallback_reason: str | None = None
     latency_ms: float = Field(ge=0.0)

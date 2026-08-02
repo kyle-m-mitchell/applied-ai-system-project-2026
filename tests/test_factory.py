@@ -48,6 +48,33 @@ def test_build_companion_returns_working_companion():
     assert response.action.value in {"recommend", "degraded"}
 
 
+def test_build_fma_companion_uses_verified_bundled_lite_without_materializing_full_catalog():
+    companion = build_companion(
+        CompanionConfig(
+            catalog_id="fma",
+            fma_lite_path=str(ROOT / "data" / "catalogs" / "fma-lite.sqlite"),
+            fma_lite_manifest_path=str(
+                ROOT / "data" / "catalogs" / "fma-lite.manifest.json"
+            ),
+        )
+    )
+
+    assert companion.catalog_id == "fma"
+    assert companion.catalog_artifact_source == "bundled-lite"
+    assert companion.catalog_descriptor is not None
+    assert companion.catalog_descriptor.accepted_count == 300
+    assert companion.catalog_descriptor.edition.value == "lite"
+    response = companion.respond("calm independent folk")
+    assert response.action.value == "recommend"
+    assert response.retrieval is not None
+    assert all(hit.track.catalog_id == "fma" for hit in response.retrieval.hits)
+
+
+def test_fma_factory_requires_a_verified_lite_fallback_configuration():
+    with pytest.raises(ValueError, match="fma_lite"):
+        build_companion(CompanionConfig(catalog_id="fma"))
+
+
 def test_factory_reproduces_direct_construction(catalog, guides):
     # The Phase 2 reproduction gate: text-only queries must return the SAME
     # recommendation ids whether the companion is built by the factory or

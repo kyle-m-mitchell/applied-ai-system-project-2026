@@ -86,7 +86,7 @@ def test_every_hit_carries_provenance(retriever):
     assert result.index_fingerprint == retriever.index_fingerprint
     for hit in result.hits:
         assert hit.source_type is SourceType.CATALOG
-        assert hit.source_id == f"catalog:{hit.track.id}"
+        assert hit.source_id == f"catalog:{hit.track.catalog_id}:{hit.track.id}"
         assert hit.content_hash
         assert hit.fields_used == RETRIEVAL_FIELDS
         assert 0.0 < hit.score <= 1.0

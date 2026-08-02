@@ -1,302 +1,307 @@
-# Data Card: Fictional Music Catalog
+# Cadence Catalog Data Card
 
-Version: **2.0**  
-Generated: **2026-07-26**  
-Intended system: **Applied AI Music Companion / Cadence**  
-Status: **Automated validation complete; human content review pending**
+Version: **3.0 / Phase 5**  
+Updated: **2026-08-02**  
+System: **Cadence Applied AI Music Companion**  
+Status: **fictional control verified; FMA build code fixture-tested; real Full/Lite artifact measurements pending**
 
-## Summary
+## Why there are two catalogs
 
-This dataset is the authoritative grounding catalog for the music recommender.
-It contains exactly **200 fictional tracks across 20 genres, with 10 tracks per
-genre**. It expands the original 20-track classroom catalog while preserving
-every original value for IDs 1–20.
+Cadence separates a regression control from a real-data product catalog:
 
-The dataset is designed to support two different jobs:
+| Catalog | Purpose | Data claim |
+|---|---|---|
+| `fictional` | Preserve the original classroom behavior and its evaluation baseline | 200 project-authored fictional tracks; complete synthetic fields |
+| `fma` | Discover real independent-music records without inventing missing metadata | Official FMA metadata; values remain source-scoped, computed, estimated, derived, or unknown |
 
-1. the original deterministic scorer uses genre, mood, and numeric audio-style
-   features; and
-2. RAG retrieval uses descriptions, tags, contexts, instruments, and provenance
-   to find semantically relevant tracks. As of Feature 3, the local TF-IDF
-   retriever (`src/retrieval.py`) builds one document per track from `genre`,
-   `mood`, `era`, `description`, `tags`, `contexts`, and `instruments`, and stores
-   a per-track content hash plus an index fingerprint. That fingerprint covers
-   both sources' content (catalog and guides) and the query-expansion settings, so
-   it satisfies the update-policy rule below: any change to catalog content, guide
-   content, or expansion tuning invalidates a stale retrieval index.
+The catalogs may reuse local integer IDs. Every persistent or cross-component
+identity therefore uses `TrackRef(catalog_id, track_id, external_id)`.
 
-The tracks are fictional. The values do not come from audio analysis, listener
-behavior, licensed music services, or real artist profiles.
+FMA Full and FMA Lite are editions of one catalog, not separate listener choices.
+The resolver prefers a verified Full artifact and discloses when it falls back to
+Lite.
 
-## Files and provenance
+## Sources and primary references
 
-- [`data/songs.csv`](../data/songs.csv) is the application catalog.
-- [`data/legacy_songs.csv`](../data/legacy_songs.csv) is the immutable 20-track
-  baseline used to prove that Feature 2 did not rewrite the original project.
-- [`scripts/generate_catalog.py`](../scripts/generate_catalog.py) contains the
-  deterministic authoring rules and generation-time validations.
+The FMA design follows the [official FMA repository](https://github.com/mdeff/fma)
+and [FMA paper](https://arxiv.org/abs/1612.01840).
 
-Baseline SHA-256:
+The official metadata archive contains multiple files with different roles:
+
+- `tracks.csv`: track identity, track information, album information, artist
+  biography, dates, genres, scoped tags, license, and some supplied URLs. Coverage
+  varies by field.
+- `genres.csv`: genre IDs and names used to normalize the track genre lists.
+- `echonest.csv`: Echo Nest-computed audio features for a smaller overlap. These
+  are machine estimates, not directly observed truth.
+- `features.csv`: 518 Librosa-derived summary statistics for nearly all tracks.
+  These are offline model inputs, not track descriptions.
+
+The archive checksum is pinned by `scripts/build_fma_catalog.py`; unsafe or
+mismatched archives are rejected before extraction. A generated manifest records
+the SHA-256 of every consumed source. Do not substitute a mirror or later archive
+without an intentional checksum/version update and rebuild.
+
+## Acceptance and quarantine policy
+
+FMA Full attempts to accept every source row with:
+
+1. a valid positive track ID;
+2. a nonempty normalized title; and
+3. a nonempty normalized artist name.
+
+Missing genre, license, date, prose, tags, URL, or audio features do not reject an
+otherwise identifiable track. Those fields remain empty/unknown. Invalid or
+duplicate IDs and missing title/artist identities are written to a deterministic
+quarantine report with reason codes.
+
+The actual accepted and quarantined counts must come from the generated manifest.
+The commonly cited FMA total of about 106,000 is context, not a build assertion.
+No production count is recorded here until a real pinned build is committed.
+
+## FMA Lite selection
+
+Lite is a deterministic 300-track fallback selected only from rows with complete
+Echo Nest target features. Eligible rows are grouped by available `genre_top`,
+ordered by a salted stable hash of track ID, and selected round-robin across genre
+groups. Source row order is never a tie-breaker. The final database is stored in
+track-ID order.
+
+This produces a portable fallback with useful numeric evidence. It does not claim
+to be statistically representative of FMA or listening demand.
+
+## Catalog schema and evidence scope
+
+Only identity is universal. All other fields are optional.
+
+| Destination | FMA source/scope | Meaning and boundary |
+|---|---|---|
+| `catalog_id`, `id`, `external_id` | ETL identity | Namespaced stable identity; `external_id` is not a fabricated URL |
+| `title`, `artist` | FMA metadata | Required display identity |
+| `genre`, `genres` | `track.genre_top`, `genres(_all)`, `genres.csv` | Source classifications; missing remains unknown |
+| `tags` | track tags | Track-scoped keywords only |
+| `album_tags` | album tags | Album-scoped keywords; never relabeled as track tags |
+| `artist_tags` | artist tags | Artist-scoped keywords; never relabeled as track tags |
+| `track_information` | track information | Source text about the track; sanitized to visible plain text |
+| `album_information` | album information | Source text about the album; displayed and indexed as album context |
+| `artist_biography` | artist biography | Source text about the artist; displayed and indexed as artist context |
+| `license` | track license | Source-supplied text; missing is not replaced by the metadata license |
+| URL fields | source-supplied URL candidates | Absolute safe HTTP(S) values only; no FMA page URL is synthesized |
+| `energy`, `valence`, `acousticness`, `danceability`, `tempo_bpm`, `instrumentalness` | Echo Nest overlap or released specialized estimate | Value always carries origin, method, confidence, and interval when estimated |
+| `era` | release/creation date | Deterministic decade derivation, not an authored aesthetic claim |
+| `mood_profile` | trustworthy energy + valence | Experimental four-quadrant distribution; never written into authored `mood` |
+| `explicit`, `instrumental` | unavailable as verified booleans | Always unknown for FMA; cannot pass clean-only/instrumental-only filters |
+
+The fictional `description`, `mood`, `explicit`, and `instrumental` fields remain
+valid for the fictional catalog. Their completeness must never leak into FMA.
+
+## Field lineage
+
+Each populated evidence-sensitive field may carry `FieldLineage`:
+
+- `authored`
+- `artist_supplied`
+- `fma_metadata`
+- `librosa_computed`
+- `echonest_computed`
+- `model_estimated`
+- `deterministic_derived`
+- `unknown`
+
+Lineage records the destination field, source fields, method/model version,
+confidence, and prediction interval where applicable. `model_estimated` requires
+a model version and confidence. Having a number is not enough; the product must
+also be able to say where that number came from.
+
+### Unknown is not false or zero
+
+- `explicit=None` does not prove clean lyrics.
+- `instrumental=None` does not prove vocals or instrumentals.
+- a missing numeric value contributes neither the score numerator nor denominator;
+- two missing moods are not an MMR similarity match;
+- retrieval documents omit absent values rather than indexing the word `None`;
+- evidence lists only fields actually used.
+
+This rule is enforced in contracts, retrieval, scoring, evaluation, and
+presentation—not merely described here.
+
+## Text normalization and retrieval documents
+
+The ETL uses explicit FMA multi-row column names. It does not guess positions.
+It applies:
+
+- pandas 3.0.x with 3.0.3 pinned in the ML/ETL environment;
+- explicit missing-value handling;
+- `ast.literal_eval` only for expected list-like cells;
+- Unicode NFC normalization and whitespace normalization;
+- visible plain-text extraction from HTML, ignoring script/style content;
+- finite/range checks for numeric values;
+- safe absolute HTTP(S) URL checks;
+- deterministic row ordering and canonical JSON serialization.
+
+FTS5 stores separate weighted columns for title, artist, genres, track/album/artist
+tags, track/album/artist prose, and deterministic feature terms. Scope is never
+erased to make retrieval look denser.
+
+## Numeric features and specialized estimates
+
+Echo Nest values are retained as `echonest_computed`. Missing values may receive a
+specialized estimate only if a target-specific model and that row pass both global
+and local gates. Model inputs are Librosa-derived statistics. The serving app
+reads baked predictions; it does not install scikit-learn or deserialize a model.
+
+For each target, the report records:
+
+- artist-group train/calibration/locked-test counts;
+- median-dummy, Ridge, and gradient-boosting MAE;
+- R²;
+- 10th–90th interval coverage;
+- retained coverage after uncertainty/OOD gates;
+- model/version and release status.
+
+Global release requires at least 5% held-out MAE improvement over both baselines,
+75–90% interval coverage, and at least 30% retained coverage on otherwise-missing
+tracks. Calibration sets a row gate consistent with retained MAE no worse than
+`0.15` for unit features or `15 BPM` for tempo. Out-of-range, OOD, excessively
+wide, or unreleased predictions remain `None`.
+
+No real metrics are claimed until a report generated from the pinned FMA sources
+is committed and reviewed.
+
+## Experimental mood profile
+
+Cadence maps energy and valence into four probability-like quadrant scores:
 
 ```text
-422930d26024fc1a0a52ee35de9e373aa0110b6ec5d91b23044f9833990f2b8e
+upbeat  = high_arousal       × positive
+calm    = (1 - high_arousal) × positive
+intense = high_arousal       × (1 - positive)
+somber  = (1 - high_arousal) × (1 - positive)
 ```
 
-Generated catalog SHA-256:
+where both axes use a sigmoid centered at `0.5` with scale `0.15`. If the best
+quadrant is less than `0.10` ahead of the runner-up, `label=None`. Confidence from
+estimated input axes propagates into the profile. The schema marks every profile
+`experimental`.
+
+FMA tags can be displayed as source tags but do not change mood scores until a
+human calibration gate explicitly permits a bounded tag weight.
+
+## Human annotation data
+
+`scripts/build_mood_annotation_sample.py` creates a deterministic, genre-stratified
+target set and deliberately excludes prediction fields. `scripts/annotate_mood.py`
+is gated by `CADENCE_LOCAL_ANNOTATION=1`, accepts pseudonymous primary/audit labels,
+and refuses duplicate judgments from the same rater for the same track.
+
+The readiness report targets 300 primary-labeled tracks and 60 independent audit
+pairs. Reaching raw counts does not automatically change production. A future
+promotion script must also define and pass agreement thresholds, document the
+human decision, and limit any adjustment to reviewed calibration parameters.
+
+Labels are local research data and are not committed by default. Do not collect
+names or listening histories.
+
+## Artifact layout and verification
+
+Every SQLite edition has a canonical JSON manifest plus a manifest checksum
+sidecar. The manifest includes:
+
+- artifact/catalog/edition identity;
+- schema and ETL versions;
+- source, database, and compressed-distribution SHA-256 values;
+- accepted/quarantined counts;
+- artifact/distribution byte sizes;
+- per-field coverage;
+- licenses and attribution;
+- supported filters/features/retrieval methods;
+- research and calibration status.
+
+SQLite is opened with URI `mode=ro&immutable=1` plus `PRAGMA query_only=ON`.
+Validation checks the application ID, schema version, `quick_check`, FTS5
+availability, track count, and artifact checksum.
+
+The resolver order is:
 
 ```text
+verified local FMA Full
+→ verified release cache or checksummed HTTPS download
+→ verified committed FMA Lite
+→ fail closed if no artifact is valid
+```
+
+The manifest is checksummed, not cryptographically signed. Do not describe it as
+a digital signature.
+
+## Fictional regression-control catalog
+
+The fictional catalog remains at `data/songs.csv`; `data/legacy_songs.csv` keeps
+the original 20-row baseline. It contains 200 synthetic tracks across 20 evenly
+balanced genres. It was generated for deterministic education and testing, not
+from audio or listener behavior.
+
+Historical hashes:
+
+```text
+legacy baseline SHA-256:
+422930d26024fc1a0a52ee35de9e373aa0110b6ec5d91b23044f9833990f2b8e
+
+fictional catalog SHA-256:
 122f10f41ad04be3ebb08ef463e17a1d7a0861bcd4a59910cb88d8be9d0091ab
 ```
 
-Regeneration is byte-idempotent: unchanged source profiles and baseline data
-produce the same catalog hash.
+The established evaluation control is `0.863` average genre satisfaction with
+100% required hard-constraint adherence. Phase 5 is required to preserve this
+control; a new FMA metric does not replace it.
 
-## Context guides (second retrieval source)
+## Intended uses
 
-Feature 3b adds a **second retrieval source** alongside the catalog:
-[`data/context_guides/`](../data/context_guides/) holds one Markdown file per
-listening situation (Studying & Focus, Workout & Energy, Rainy Day & Melancholy,
-Party & Dance Floor, Wind-Down & Sleep, Road Trip & Driving, Romantic & Intimate,
-Morning Motivation). Each file's first `# Heading` is the title, the file stem is
-the guide id, and the retriever stores a per-guide content hash for provenance.
+- transparent recommendation and retrieval education;
+- independent-music metadata discovery with no playback claim;
+- testing unknown-safe ranking and evidence lineage;
+- offline evaluation of specialized estimates and abstention;
+- portfolio demonstration of an integrated RAG/agent/reliability product.
 
-Guides are **not recommendable items**. When a query matches a guide, the guide's
-distinctive catalog-vocabulary terms are folded into the track query (query
-expansion), and the guide is recorded as cited evidence (`GuideEvidence`). This
-lets a listener's word that appears in no track (for example, "concentrate")
-still reach relevant tracks.
+## Prohibited or unsupported uses
 
-**Provenance and review.** These guides are **AI-drafted fictional prose, pending
-curator review**, in the same spirit as the catalog. They encode human judgment
-about what music is "for," so a person should review their wording for tone and
-bias before the project is presented. They are not sourced from real listening
-research.
+- asserting that Cadence listened to or analyzed audio at runtime;
+- treating Echo Nest values or model estimates as observed truths;
+- using missing FMA explicit/instrumental booleans as hard evidence;
+- redistributing FMA audio under the metadata license;
+- using the catalog as evidence of artist popularity, quality, identity, or
+  listener preference;
+- using DEAM data or derived thresholds in production;
+- persisting web research as catalog truth.
 
-## Embedding cache (derived artifact)
+## Biases and risks
 
-Feature 4 adds a third file family under `data/embeddings/` (`catalog.json`,
-`queries.json`): Gemini vectors derived from the catalog documents and a fixed
-set of example queries. It is **generated, not authored** — built once by
-`scripts/build_embeddings.py` and committed so the semantic index reproduces with
-no API key. Each cache records its embedding model and dimension and a content
-hash of the catalog documents; a mismatch marks the cache stale, and retrieval
-falls back to TF-IDF. Regenerate and re-commit it whenever catalog content, the
-model, or the dimension changes.
+- FMA represents a particular independent-music ecosystem and time period.
+- metadata coverage and vocabulary vary by artist, genre, and contributor;
+- richer biographies may improve text retrieval for reasons unrelated to musical
+  fit;
+- Echo Nest overlap is not a random sample, so supervised targets may create
+  selection bias;
+- Librosa statistics and the mood formula reduce music to limited acoustic axes;
+- genre labels and mood language are culturally contingent;
+- FMA Lite's balancing improves demo coverage but changes the source distribution;
+- URLs and license text can become stale even when source-supplied.
 
-## Composition
+Evaluation must report results by genre and provenance where sample sizes permit,
+not only one aggregate score.
 
-The 20 genres are:
+## Rebuild and update policy
 
-```text
-ambient, blues, classical, country, edm, folk, funk, hip hop, house,
-indie pop, jazz, lofi, metal, pop, punk, r&b, reggae, rock, soul, synthwave
-```
+Any source, schema, parser, selection salt, model, threshold, or mood-method change
+requires:
 
-The original catalog had 17 genres. Feature 2 added `house`, `soul`, and `punk`
-and filled every genre to exactly 10 records. This artificial balance is useful
-for testing coverage; it is not meant to represent music-market popularity.
+1. a version bump where behavior changed;
+2. a clean rebuild from pinned inputs;
+3. deterministic checksum comparison;
+4. complete tests and the fictional regression gate;
+5. regenerated model and coverage reports;
+6. licensing/attribution review;
+7. artifact/performance measurements on the documented machine;
+8. documentation updates from generated evidence;
+9. human approval before replacing a published release asset.
 
-Additional distribution facts:
-
-- 48 tracks are marked instrumental; 152 are marked vocal.
-- 10 tracks carry a fictional explicit-content flag; 190 are marked clean.
-- Era labels range from the `1950s` through the `2020s`.
-- All 16 moods belong to the scorer’s documented mood families.
-
-## Schema
-
-| Field | Loaded type | Constraint | Purpose |
-|---|---|---|---|
-| `id` | integer | Unique, 1–200 | Stable catalog identity and tie-breaker |
-| `title` | string | Nonempty | Display and retrieval text |
-| `artist` | string | Nonempty, fictional | Display and retrieval text |
-| `genre` | string | One of 20 catalog genres | Scoring, filter, retrieval |
-| `mood` | string | Mapped mood vocabulary | Scoring and retrieval |
-| `energy` | float | 0–1 | Original content score |
-| `tempo_bpm` | float | 50–200 | Original content score |
-| `valence` | float | 0–1 | Original content score |
-| `danceability` | float | 0–1 | Original content score |
-| `acousticness` | float | 0–1 | Original content score |
-| `description` | string | 20–500 characters in contract; generated records use richer sentences | Primary semantic retrieval text |
-| `tags` | tuple after load | Pipe-delimited, unique, 2–12 values | Keywords and evidence |
-| `contexts` | tuple after load | Pipe-delimited, unique, 2–12 values | Activity/situation retrieval |
-| `instruments` | tuple after load | Pipe-delimited, unique, 1–12 values | Sound-specific retrieval |
-| `instrumental` | boolean after load | CSV must be `true` or `false` | Future hard constraint |
-| `explicit` | boolean after load | CSV must be `true` or `false` | Future clean-only hard constraint |
-| `era` | string | Canonical decade such as `1990s` | Style/filter clue |
-
-`era` is a **stylistic decade label**, not a verified release date. All tracks
-are fictional and were generated for this project.
-
-## Authoring method
-
-No network call or language model runs during catalog generation.
-
-The generator defines one reviewed profile per genre containing:
-
-- fictional titles and artist-name vocabularies;
-- allowed moods;
-- genre-specific tags, contexts, instruments, and a description template;
-- a center point for each numeric feature;
-- deterministic offsets that create controlled within-genre variation;
-- instrumental, explicit, and era assignments.
-
-The process is:
-
-```text
-verify immutable 20-row baseline hash
-  → copy the original ten fields for IDs 1–20
-  → add rich metadata to those rows
-  → generate enough fictional rows to bring every genre to ten
-  → assign IDs 21–200
-  → run generation-time integrity checks
-  → write the canonical CSV
-```
-
-This approach was chosen over runtime AI generation because the application
-needs stable, reviewable, testable evidence. An API-generated catalog could
-change between runs, introduce real names or unsafe content, and make evaluation
-irreproducible.
-
-## Automated validation
-
-Generation and application tests jointly verify:
-
-- exactly 200 rows and 20 genres × 10;
-- IDs exactly 1–200;
-- no duplicate normalized title/artist identity;
-- exact preservation of all original fields for IDs 1–20;
-- exact column schema and canonical encoding;
-- valid numeric/BPM ranges;
-- nonempty, unique pipe-delimited metadata;
-- canonical booleans;
-- mapped mood vocabulary;
-- only the expected three new genres;
-- successful Pydantic validation for every loaded track;
-- exact-genre recommendations for house, soul, and punk through the real service;
-- rejection of malformed booleans, list cells, and schema drift.
-
-Verification command:
-
-```bash
-python -m pytest -q
-```
-
-Verified result on 2026-08-01 (Features 3/3b/4 + Features 5–6 added retrieval,
-context-guide, embedding/hybrid, guard/intent/companion, and ranking/evaluator/
-voice tests; the evaluation harness and the scoring + observability foundation
-added the rest — all offline):
-
-```text
-224 passed
-```
-
-## Human review protocol
-
-Automation can prove shape and consistency, but it cannot decide whether a
-description is culturally tasteful, a context feels appropriate, or a genre
-profile encodes a stereotype. A person should review one representative record
-per genre and every automatically flagged extreme before final submission.
-
-For each record, ask:
-
-1. Do the title and artist appear fictional, respectful, and non-confusing?
-2. Do genre, mood, numeric features, description, and tags tell a coherent story?
-3. Are the suggested contexts appropriate and non-manipulative?
-4. Are instrumental and explicit flags plausible within this fictional record?
-5. Does the language avoid cultural caricatures or claims of objective truth?
-
-### Representative sample for sign-off
-
-| Reviewed | ID | Genre | Track | Mood | Example context |
-|---|---:|---|---|---|---|
-| [ ] | 6 | ambient | Spacewalk Thoughts — Orbit Bloom | chill | meditation |
-| [ ] | 17 | blues | Rainwater Blues — Delta Marrow | somber | late-night reflection |
-| [ ] | 12 | classical | Winter Adagio — The Hollow Strings | melancholy | focused reading |
-| [ ] | 15 | country | Dust Road Home — Marigold County | nostalgic | scenic drives |
-| [ ] | 16 | edm | Neon Cathedral — Pulsewidth | euphoric | dance workouts |
-| [ ] | 18 | folk | Paper Compass — Wander & Wren | hopeful | quiet road trips |
-| [ ] | 20 | funk | Sidewalk Strut — The Groove Committee | playful | dance breaks |
-| [ ] | 11 | hip hop | Concrete Kings — Block Cipher | energetic | confidence boosts |
-| [ ] | 171 | house | Open Door Rhythm — Civic Groove | uplifting | dance floors |
-| [ ] | 10 | indie pop | Rooftop Lights — Indigo Parade | happy | sunny walks |
-| [ ] | 7 | jazz | Coffee Shop Stories — Slow Stereo | relaxed | dinner ambience |
-| [ ] | 2 | lofi | Midnight Coding — LoRoom | chill | deep study |
-| [ ] | 14 | metal | Iron Verdict — Ashfall Method | aggressive | maximum-effort training |
-| [ ] | 1 | pop | Sunrise City — Neon Echo | happy | morning motivation |
-| [ ] | 191 | punk | Borrowed Megaphone — The Loose Bolts | aggressive | skate sessions |
-| [ ] | 19 | r&b | Velvet Hours — Sable Rose | romantic | date-night ambience |
-| [ ] | 13 | reggae | Island Mailbox — Palm & Tide | uplifting | beach afternoons |
-| [ ] | 3 | rock | Storm Runner — Voltline | intense | hard workouts |
-| [ ] | 181 | soul | Hold the Light — Amara Wells | romantic | slow Sunday mornings |
-| [ ] | 8 | synthwave | Night Drive Loop — Neon Echo | moody | night driving |
-
-Reviewer: ____________________  
-Date: ____________________  
-Decision/issues: ____________________
-
-### Flagged extremes for review
-
-Boundary values are valid but may produce overly strong retrieval/ranking
-signals. Review these IDs intentionally:
-
-| Feature | Minimum | Maximum |
-|---|---|---|
-| Energy | ID 45, Tidal Glass — 0.14 | ID 112, Obsidian March — 1.00 |
-| Tempo | ID 45, Tidal Glass — 54 BPM | ID 197, Loud Enough Now — 178 BPM |
-| Valence | ID 114, Last Iron Dawn — 0.20 | ID 164, Groove Receipt — 0.96 |
-| Danceability | ID 93, Letters in Adagio — 0.08 | ID 171, Open Door Rhythm — 1.00 |
-| Acousticness | ID 37, Static Horizon — 0.00 | ID 96, Quiet Triumph — 1.00 |
-
-Also review all fictional explicit-flag IDs:
-
-```text
-42, 83, 87, 109, 113, 116, 158, 193, 196, 199
-```
-
-## Risks and limitations
-
-- **Synthetic labels:** Numeric values and metadata are authored, not measured
-  from audio. They are useful for software behavior, not musicological claims.
-- **Template artifacts:** Similar sentence structure and repeated genre terms may
-  make retrieval look better than it would on messy real-world documents.
-- **Author bias:** Genre families, contexts, instruments, moods, and names reflect
-  the designers’ assumptions and cultural exposure.
-- **Artificial balance:** Ten tracks per genre improves testing equality but says
-  nothing about listener demand or real catalog distribution.
-- **Genre simplification:** Music crosses genres; assigning one label per track
-  hides hybridity and regional variation.
-- **Era ambiguity:** Decades describe a fictional aesthetic, not provenance.
-- **Explicit flag limitation:** There are no lyrics, so the flag is a simulated
-  product constraint rather than a content-analysis result.
-- **No popularity or collaborative data:** The system cannot infer “people like
-  you also enjoyed” behavior.
-- **No demographic attributes:** This avoids demographic profiling but also means
-  fairness cannot be evaluated across listener groups from this dataset alone.
-
-## Appropriate and inappropriate use
-
-Appropriate:
-
-- classroom demonstrations of recommendation, RAG, validation, and evaluation;
-- deterministic testing of filters and ranking;
-- portfolio demonstrations that clearly identify the fictional data.
-
-Inappropriate:
-
-- claiming these are real songs or measured audio properties;
-- using the data to make factual claims about artists, cultures, or genres;
-- evaluating production recommendation quality or demographic fairness;
-- presenting `explicit`, mood, or era fields as objective labels.
-
-## Update policy
-
-Any catalog change must:
-
-1. intentionally update the deterministic source profiles;
-2. regenerate `data/songs.csv`;
-3. run all tests;
-4. update the generated SHA-256 here;
-5. preserve or explicitly migrate the legacy snapshot;
-6. repeat representative and outlier human review;
-7. rebuild any retrieval index whose content hash no longer matches.
+Never edit a generated SQLite file or manifest by hand.

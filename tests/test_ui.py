@@ -12,7 +12,12 @@ from src.contracts import (
     FeatureRelation,
     GuardCategory,
     OperatingMode,
+    ResearchBrief,
+    ResearchCitation,
+    ResearchClaim,
+    ResearchStatus,
 )
+from src.research import ResearchOutcome
 from ui.runtime import get_runtime
 
 
@@ -25,14 +30,23 @@ def offline_runtime(monkeypatch):
     get_runtime.clear()
 
 
-def _new_app() -> AppTest:
+def _new_app(*, catalog: str | None = "fictional") -> AppTest:
     app = AppTest.from_file("streamlit_app.py", default_timeout=15).run()
     assert not app.exception
+    if catalog is not None and app.selectbox[0].value != catalog:
+        app.selectbox[0].set_value(catalog)
+        app.run()
+        assert not app.exception
     return app
 
 
-def _start(query: str, *, local_only: bool = True) -> AppTest:
-    app = _new_app()
+def _start(
+    query: str,
+    *,
+    local_only: bool = True,
+    catalog: str = "fictional",
+) -> AppTest:
+    app = _new_app(catalog=catalog)
     if not local_only:
         app.toggle[0].set_value(False)
         app.run()
@@ -72,10 +86,106 @@ def _rendered_text(app: AppTest) -> str:
     return "\n".join(parts)
 
 
+def test_fma_is_the_initial_catalog_and_discloses_the_concrete_edition():
+    app = _new_app(catalog=None)
+    text = _rendered_text(app)
+
+    assert app.selectbox[0].label == "Music catalog"
+    assert app.selectbox[0].value == "fma"
+    assert _session(app).catalog_id == "fma"
+    assert "FMA Lite" in text
+    assert "verified 300-track artifact" in text
+    assert "unknown values stay unknown" in text
+
+
+def test_fma_cards_and_console_render_unknowns_and_capabilities_honestly():
+    app = _start("calm folk music", catalog="fma")
+    state = _session(app)
+    text = _rendered_text(app)
+    tracks = tuple(hit.track for hit in state.current.turn.response.retrieval.hits)
+
+    assert state.catalog_id == "fma"
+    assert all(track.catalog_id == "fma" for track in tracks)
+    assert "FMA Lite" in text
+    assert "experimental" in text.lower()
+    assert "Instrumental character" in [item.label for item in app.segmented_control]
+    assert next(item for item in app.toggle if item.label == "Instrumental only").disabled
+    assert next(item for item in app.toggle if item.label == "Clean only").disabled
+    assert "Clean confirmed" not in text
+    assert "Instrumental confirmed" not in text
+    assert ">None<" not in text and "License\nNone" not in text
+
+
+def test_catalog_switch_clears_mix_undo_rating_research_and_dynamic_state():
+    app = _start("calm folk music", catalog="fma")
+    request_id = _session(app).current.turn.receipt.request_id
+    app.session_state["cadence_research_cache"] = {"catalog:fma:1": object()}
+    app.session_state[f"fit_{request_id}"] = 4
+    app.session_state["console_test_draft"] = "stale"
+
+    app.selectbox[0].set_value("fictional")
+    app.run()
+
+    state = _session(app)
+    stored = app.session_state.filtered_state
+    assert not app.exception
+    assert state.catalog_id == "fictional"
+    assert state.snapshots == () and state.transient is None
+    assert stored["cadence_research_cache"] == {}
+    assert f"fit_{request_id}" not in stored
+    assert "console_test_draft" not in stored
+
+
+def test_cached_research_claims_render_with_citations_and_a_sanitized_trace():
+    app = _start("calm folk music", catalog="fma")
+    track = _session(app).current.turn.response.retrieval.hits[0].track
+    citation = ResearchCitation(
+        citation_id="source-1",
+        title="Verified source",
+        url="https://musicbrainz.org/recording/example",
+        source_domain="musicbrainz.org",
+    )
+    brief = ResearchBrief(
+        track_ref=track.ref,
+        status=ResearchStatus.PUBLISHED,
+        identity_confidence=1.0,
+        claims=(
+            ResearchClaim(
+                text="A citation-backed session-only fact.",
+                citation_ids=(citation.citation_id,),
+            ),
+        ),
+        citations=(citation,),
+        source_domains=(citation.source_domain,),
+        provider="fixture",
+        model_id="fixture-v1",
+        timestamp="2026-08-02T00:00:00+00:00",
+    )
+    app.session_state["cadence_research_cache"] = {
+        track.ref.source_id: ResearchOutcome(
+            brief=brief,
+            trace=(
+                "local recommendation complete",
+                "research requested",
+                "identity resolved",
+                "citations validated",
+                "brief published",
+            ),
+        )
+    }
+
+    app.run()
+    text = _rendered_text(app)
+    assert not app.exception
+    assert "A citation-backed session-only fact." in text
+    assert "musicbrainz.org" in text
+    assert "Research did not alter eligibility, ranking, or catalog fields" in text
+
+
 def test_first_run_and_normal_ids_match_the_public_service():
     app = _start("some jazz please")
     snapshot = _session(app).current
-    direct = get_runtime().companion.respond_detailed(
+    direct = get_runtime("fictional").companion.respond_detailed(
         "some jazz please", policy=ExecutionPolicy(force_local=True)
     )
 

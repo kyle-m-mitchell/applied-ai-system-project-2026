@@ -131,9 +131,15 @@ class CadenceVoice:
                 why = " — " + ", ".join(hit.matched_terms[:3])
             else:
                 why = ""
-            lines.append(
-                f"{rank}. {track.title} — {track.artist} [{track.genre} · {track.mood}]{why}"
-            )
+            details: list[str] = []
+            if track.genre:
+                details.append(track.genre)
+            if track.mood:
+                details.append(track.mood)
+            elif track.mood_profile and track.mood_profile.label:
+                details.append(f"{track.mood_profile.label.value} (experimental)")
+            evidence = f" [{' · '.join(details)}]" if details else ""
+            lines.append(f"{rank}. {track.title} — {track.artist}{evidence}{why}")
         return "\n".join(lines)
 
     @staticmethod

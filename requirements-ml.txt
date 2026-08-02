@@ -1,0 +1,6 @@
+# Offline-only FMA ETL/model environment. The deployed app does not install
+# these packages or deserialize trained estimators; it reads baked predictions.
+-r requirements-core.txt
+
+pandas==3.0.3
+scikit-learn==1.9.0

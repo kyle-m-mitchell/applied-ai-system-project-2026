@@ -42,8 +42,10 @@ def _similarity(a: CatalogTrack, b: CatalogTrack) -> float:
     ``same_family`` carries the shared guard, so this and the legacy scorer can
     never disagree about what "same family" means.
     """
-    if a.genre == b.genre:
-        return 1.0 if a.mood == b.mood else 0.7
+    if a.genre is not None and b.genre is not None and a.genre == b.genre:
+        # Unknown moods provide no evidence of similarity. Same known mood is
+        # exact; otherwise the shared known genre still supplies 0.7.
+        return 1.0 if a.mood is not None and b.mood is not None and a.mood == b.mood else 0.7
     if same_family(a.genre, b.genre, GENRE_TO_FAMILY):
         return 0.4
     return 0.0
@@ -56,7 +58,7 @@ def mood_similarity(a: CatalogTrack, b: CatalogTrack) -> float:
     the request. Diversity should instead vary the mood *within* the genre, so we
     measure similarity by mood alone and let same-genre tracks coexist freely.
     """
-    if a.mood == b.mood:
+    if a.mood is not None and b.mood is not None and a.mood == b.mood:
         return 1.0
     if same_family(a.mood, b.mood, MOOD_TO_FAMILY):
         return 0.4
