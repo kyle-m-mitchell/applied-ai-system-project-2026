@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from src.contracts import CatalogTrack, RetrievalHit, SourceType
-from src.ranking import _similarity, mmr_rerank
+from src.ranking import _similarity, mmr_rerank, mood_similarity
 
 
 def _track(track_id: int, genre: str, mood: str) -> CatalogTrack:
@@ -58,6 +58,28 @@ def test_mmr_diversifies_over_clustered_results():
     assert out[0].track.id == 1  # relevance still leads
     assert len({hit.track.genre for hit in out}) == 3  # spread across genres
     assert 5 in ids and 2 not in ids  # a diverse low-score beats a duplicate high-score
+
+
+def test_mood_similarity_ignores_genre():
+    # When a genre is fixed, diversity should come from mood, not genre. Two
+    # different genres with the SAME mood must read as similar (so MMR spreads
+    # moods), and the same genre with different moods must read as dissimilar.
+    assert mood_similarity(_track(1, "jazz", "chill"), _track(2, "blues", "chill")) == 1.0
+    assert mood_similarity(_track(3, "jazz", "chill"), _track(4, "jazz", "intense")) == 0.0
+
+
+def test_mmr_with_mood_similarity_keeps_the_requested_genre():
+    # All jazz, varied moods. With mood-based diversity, MMR keeps jazz throughout
+    # and spreads the moods instead of dragging in another genre for variety.
+    hits = [
+        _hit(1, "jazz", "chill", 0.90),
+        _hit(2, "jazz", "chill", 0.85),
+        _hit(3, "jazz", "intense", 0.80),
+    ]
+    out = mmr_rerank(hits, 2, similarity=mood_similarity)
+    ids = [h.track.id for h in out]
+    assert ids == [1, 3]  # #1 leads; the different-mood jazz beats the duplicate-mood jazz
+    assert all(h.track.genre == "jazz" for h in out)
 
 
 def test_lambda_one_is_pure_relevance():

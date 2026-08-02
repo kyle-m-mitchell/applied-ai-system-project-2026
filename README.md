@@ -425,7 +425,7 @@ Run all tests with:
 python3 -m pytest
 ```
 
-The current suite contains 139 tests covering the original scorer, validated
+The current suite contains 157 tests covering the original scorer, validated
 contracts, compatibility, normalization, malformed input, 200-track balance,
 legacy preservation, retrieval-metadata integrity, schema drift, new-genre
 service behavior, non-mutation, TF-IDF retrieval relevance, provenance, hard
@@ -449,7 +449,12 @@ unknown-genre `None == None` family guard), the unified `RankedCandidate` score
 breakdown (where `None` = "not evaluated" and `0.0` = "evaluated, no match"), the
 public `build_companion` factory (which reproduces direct construction), and the
 privacy-safe event receipt (a JSONL log that carries decisions and ids but never
-query text). Every test runs fully offline (no key).
+query text); and — new in the structured-preference hybrid — directional numeric
+cues (`prefer_high`/`near`/`at_least`/…) parsed with controlled cue-ids, the
+direction-aware structured scorer, percentile-rank fusion of the text and
+structured legs (calibrated to 0.4/0.6 against the report card), mood-based MMR
+diversity that honors an explicit genre, and the absolute genre-satisfaction gate.
+Every test runs fully offline (no key).
 
 ---
 

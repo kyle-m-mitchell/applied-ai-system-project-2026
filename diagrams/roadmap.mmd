@@ -2,9 +2,9 @@
 %% This is the intended end state. For what actually exists today, see
 %% diagrams/architecture.mmd. Solid arrows = runtime/indexing data flow;
 %% dotted arrows = dependency, testing, or observability.
-%% Still planned here: Streamlit UI, session-only memory + feedback,
-%% structured-preference ranking, and a provider structured-intent parser.
-%% (The evaluation report card and the privacy-safe JSONL receipt now exist —
+%% Still planned here: Streamlit UI, session-only memory + feedback, and a
+%% provider structured-intent parser. (The evaluation report card, the
+%% privacy-safe JSONL receipt, and the structured-preference hybrid now exist —
 %% see diagrams/architecture.mmd.)
 
 flowchart TB
@@ -15,7 +15,7 @@ flowchart TB
         INPUT_GUARD["Input + privacy guard<br/>size · PII/secret redaction · injection · crisis safe-response"]
         AGENT["MusicCompanion — bounded agent<br/>intent parser (rule now, provider structured-intent planned)<br/>allowlisted actions + privacy-safe trace"]
         RETRIEVER["Retriever interface<br/>TF-IDF · context guides · Gemini embeddings · hybrid + provenance"]
-        RANKER["Hard filters + fusion + MMR diversity<br/>semantic · lexical · structured-preference (planned) · feedback (planned)"]
+        RANKER["Hard filters + fusion + MMR diversity<br/>semantic · lexical · structured-preference · session feedback (planned)"]
         EVALUATOR["Grounding evaluator<br/>ids · duplicates · constraints · evidence · count · framing grounding"]
         POLICY["Situation policy<br/>recommend · clarify · no-match · safe-response · degraded"]
         VOICE["Cadence voice<br/>deterministic baseline + optional grounded Gemini framing"]

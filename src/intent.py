@@ -2,15 +2,21 @@
 
 Rule-based and offline, so it is reproducible and needs no provider. It reuses
 the genre/mood vocabulary already defined for the scorer, detects hard-filter
-phrases, and asks one clarifying question when it recognizes nothing to search on.
-A Gemini structured-intent parser can later implement the same ``parse`` shape.
+phrases, extracts directional numeric preferences (energy/valence/danceability/
+acousticness/tempo) as controlled-cue :class:`FeatureGoal`s, and asks one
+clarifying question when it recognizes nothing to search on. A Gemini
+structured-intent parser can later implement the same ``parse`` shape.
+
+Cues are *directions*, not fabricated targets ("calm" -> energy ``prefer_low``,
+never ``energy == 0.2``), and each carries a controlled ``cue_id`` (``energy_low_v1``)
+so a parsed preference is reproducible and auditable rather than free text.
 """
 
 from __future__ import annotations
 
 import re
 
-from src.contracts import MusicIntent
+from src.contracts import FeatureGoal, FeatureRelation, MusicIntent
 from src.recommender import GENRE_TO_FAMILY, MOOD_TO_FAMILY
 
 
@@ -25,6 +31,31 @@ _CLEAN_CUES = (
     "kid friendly", "kid-friendly", "radio edit",
 )
 
+# Directional numeric cues: (cue_id, feature, relation, trigger phrases).
+# Ordered by feature; each cue_id appears at most once in a parse.
+_PREFERENCE_CUES: tuple[tuple[str, str, FeatureRelation, tuple[str, ...]], ...] = (
+    ("energy_high_v1", "energy", FeatureRelation.PREFER_HIGH,
+     ("high energy", "high-energy", "energetic", "upbeat", "intense", "hype",
+      "workout", "pumping", "banger", "fast paced", "fast-paced", "driving")),
+    ("energy_low_v1", "energy", FeatureRelation.PREFER_LOW,
+     ("low energy", "low-energy", "calm", "mellow", "sleepy", "gentle", "soft",
+      "soothing", "downtempo", "laid back", "laid-back", "relaxing")),
+    ("acoustic_high_v1", "acousticness", FeatureRelation.PREFER_HIGH,
+     ("acoustic", "unplugged")),
+    ("valence_high_v1", "valence", FeatureRelation.PREFER_HIGH,
+     ("happy", "cheerful", "uplifting", "feel good", "feel-good", "joyful", "sunny")),
+    ("valence_low_v1", "valence", FeatureRelation.PREFER_LOW,
+     ("sad", "melancholy", "melancholic", "somber", "gloomy", "downbeat", "wistful")),
+    ("dance_high_v1", "danceability", FeatureRelation.PREFER_HIGH,
+     ("danceable", "to dance", "groovy", "party", "club")),
+)
+
+_TEMPO_MIN_BPM, _TEMPO_MAX_BPM = 50.0, 200.0
+_TEMPO_RANGE = re.compile(r"between\s+(\d{2,3})\s+and\s+(\d{2,3})\s*bpm")
+_TEMPO_ATLEAST = re.compile(r"(?:at least|over|above|faster than|min)\s+(\d{2,3})\s*bpm")
+_TEMPO_ATMOST = re.compile(r"(?:at most|under|below|slower than|max)\s+(\d{2,3})\s*bpm")
+_TEMPO_NEAR = re.compile(r"(?:around|about|near|roughly|~)?\s*(\d{2,3})\s*bpm")
+
 _TOKEN = re.compile(r"[a-z0-9&]+")
 REDACTED_TOKEN = "[redacted]"  # kept out of the searchable-token count
 
@@ -32,6 +63,45 @@ REDACTED_TOKEN = "[redacted]"  # kept out of the searchable-token count
 def _has_phrase(haystack: str, phrase: str) -> bool:
     """Match a whole-word phrase, allowing '&' (for "r&b") at the boundaries."""
     return re.search(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", haystack) is not None
+
+
+def _clamp_bpm(value: float) -> float:
+    return min(_TEMPO_MAX_BPM, max(_TEMPO_MIN_BPM, value))
+
+
+def _tempo_goal(lowered: str) -> FeatureGoal | None:
+    """Parse a single tempo goal, most specific relation first."""
+    match = _TEMPO_RANGE.search(lowered)
+    if match:
+        low, high = sorted((float(match.group(1)), float(match.group(2))))
+        return FeatureGoal(
+            feature="tempo_bpm", relation=FeatureRelation.RANGE,
+            low=_clamp_bpm(low), high=_clamp_bpm(high), cue_id="tempo_range_v1",
+        )
+    for pattern, relation, cue_id in (
+        (_TEMPO_ATLEAST, FeatureRelation.AT_LEAST, "tempo_atleast_v1"),
+        (_TEMPO_ATMOST, FeatureRelation.AT_MOST, "tempo_atmost_v1"),
+        (_TEMPO_NEAR, FeatureRelation.NEAR, "tempo_near_v1"),
+    ):
+        match = pattern.search(lowered)
+        if match:
+            return FeatureGoal(
+                feature="tempo_bpm", relation=relation,
+                target=_clamp_bpm(float(match.group(1))), cue_id=cue_id,
+            )
+    return None
+
+
+def _feature_goals(lowered: str) -> tuple[FeatureGoal, ...]:
+    """Extract all directional numeric goals present in the text (deduped by cue)."""
+    goals: list[FeatureGoal] = []
+    for cue_id, feature, relation, phrases in _PREFERENCE_CUES:
+        if any(_has_phrase(lowered, phrase) for phrase in phrases):
+            goals.append(FeatureGoal(feature=feature, relation=relation, cue_id=cue_id))
+    tempo = _tempo_goal(lowered)
+    if tempo is not None:
+        goals.append(tempo)
+    return tuple(goals)
 
 
 class IntentParser:
@@ -45,8 +115,11 @@ class IntentParser:
         exclude_explicit = any(_has_phrase(lowered, cue) for cue in _CLEAN_CUES)
         genre = next((g for g in _GENRES if _has_phrase(lowered, g)), None)
         mood = next((m for m in _MOODS if _has_phrase(lowered, m)), None)
+        feature_goals = _feature_goals(lowered)
 
-        recognized = bool(genre or mood or instrumental_only or exclude_explicit)
+        recognized = bool(
+            genre or mood or instrumental_only or exclude_explicit or feature_goals
+        )
         searchable = _TOKEN.findall(lowered.replace(REDACTED_TOKEN, " "))
 
         # Clarify only when nothing was recognized and there is too little to
@@ -65,5 +138,6 @@ class IntentParser:
             mood=mood,
             instrumental_only=instrumental_only,
             exclude_explicit=exclude_explicit,
+            feature_goals=feature_goals,
             limit=limit,
         )

@@ -41,6 +41,11 @@ OFFLINE_SCENARIOS = ("local_tfidf", "fake_hybrid", "embedding_outage", "generati
 # semantic quality (action / min_hits).
 PLUMBING_SCENARIOS = frozenset({"fake_hybrid"})
 
+# An absolute quality floor, added once the structured leg let us measure a real
+# distribution (a weight sweep peaked at 0.863). Set below the achieved value with
+# headroom, so a genuine ranking regression fails the gate — not normal variation.
+MIN_GENRE_SATISFACTION = 0.75
+
 
 class _OutageEmbedder(FakeEmbedder):
     """A fake embedder whose query embedding always fails (provider outage)."""
@@ -227,9 +232,13 @@ def _aggregate(runs, valid_ids, scenarios, tracks) -> dict:
     p50 = statistics.median(latencies) if latencies else 0.0
     p95 = latencies[int(round(0.95 * (len(latencies) - 1)))] if latencies else 0.0
 
+    # Absolute quality floor: genre satisfaction must clear MIN_GENRE_SATISFACTION
+    # (skipped only if no case measured it). This is the "measure, then gate" step.
+    genre_ok = genre_avg is None or genre_avg >= MIN_GENRE_SATISFACTION
+
     gate_passed = (
         required_pass and hard_adherence == 1.0 and faithfulness_ok
-        and emb_fallback_ok and gen_fallback_ok
+        and emb_fallback_ok and gen_fallback_ok and genre_ok
     )
 
     return {
@@ -250,6 +259,8 @@ def _aggregate(runs, valid_ids, scenarios, tracks) -> dict:
             "embedding_fallback_ok": emb_fallback_ok,
             "generation_fallback_ok": gen_fallback_ok,
             "genre_satisfaction_avg": genre_avg,
+            "genre_satisfaction_ok": genre_ok,
+            "min_genre_satisfaction": MIN_GENRE_SATISFACTION,
             "latency_ms_p50": round(p50, 2),
             "latency_ms_p95": round(p95, 2),
         },
@@ -278,7 +289,8 @@ def render_markdown(report: dict) -> str:
         f"| catalog faithfulness | {summary['faithfulness_ok']} |",
         f"| embedding-outage fallback | {summary['embedding_fallback_ok']} |",
         f"| generation-outage fallback | {summary['generation_fallback_ok']} |",
-        f"| genre satisfaction (avg) | {summary['genre_satisfaction_avg']} |",
+        f"| genre satisfaction (avg) | {summary['genre_satisfaction_avg']} "
+        f"(floor {summary['min_genre_satisfaction']}: {summary['genre_satisfaction_ok']}) |",
         f"| latency p50 / p95 (ms) | {summary['latency_ms_p50']} / {summary['latency_ms_p95']} |",
         "",
         "## By category",

@@ -11,7 +11,7 @@ flowchart TB
         INPUT_GUARD["Input + privacy guard<br/>size · PII/secret redaction · injection · crisis safe-response"]
         AGENT["MusicCompanion — bounded agent<br/>rule intent parser + allowlisted actions + privacy-safe trace"]
         RETRIEVER["Retriever interface<br/>TF-IDF · context guides · Gemini embeddings · hybrid + provenance"]
-        RANKER["Hard filters + semantic/lexical hybrid + MMR diversity"]
+        RANKER["Hard filters + semantic/lexical + structured-preference fusion (percentile) + MMR (mood- or genre-diverse)"]
         EVALUATOR["Grounding evaluator<br/>result: ids · duplicates · constraints · evidence · count<br/>generated framing: quoted-title check (narrow, defense-in-depth)"]
         POLICY["Situation policy<br/>recommend · clarify · no-match · safe-response · degraded"]
         VOICE["Cadence voice<br/>deterministic baseline + optional grounded Gemini framing"]
@@ -53,7 +53,7 @@ flowchart TB
     subgraph RELIABILITY["Reliability, measurement, and human review"]
         direction LR
         TESTER(["Human tester"])
-        TESTS["pytest — 139 offline tests<br/>unit + integration, normal · edge · adversarial · outage"]
+        TESTS["pytest — 157 offline tests<br/>unit + integration, normal · edge · adversarial · outage"]
         EVAL["Evaluation report card<br/>labeled cases · scenario matrix · pass/fail gate<br/>results never store query text"]
         EVENTS[("Privacy-safe event receipt (opt-in JSONL)<br/>decisions · ids · scores · fingerprints<br/>never query text / prompts / persistent ids")]
 

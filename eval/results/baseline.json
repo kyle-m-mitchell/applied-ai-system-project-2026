@@ -1,7 +1,7 @@
 {
   "metadata": {
-    "timestamp": "2026-08-01T23:01:41+00:00",
-    "code_version": "3b9511d",
+    "timestamp": "2026-08-02T01:10:10+00:00",
+    "code_version": "00030ab",
     "catalog_fingerprint": "cdaa53545c38a620",
     "scenarios": [
       "local_tfidf",
@@ -20,9 +20,11 @@
     "faithfulness_ok": true,
     "embedding_fallback_ok": true,
     "generation_fallback_ok": true,
-    "genre_satisfaction_avg": 0.675,
-    "latency_ms_p50": 1.22,
-    "latency_ms_p95": 2.59
+    "genre_satisfaction_avg": 0.863,
+    "genre_satisfaction_ok": true,
+    "min_genre_satisfaction": 0.75,
+    "latency_ms_p50": 1.65,
+    "latency_ms_p95": 2.96
   },
   "by_category": {
     "required_now": {
@@ -61,7 +63,7 @@
       ],
       "hard_constraint_ok": true,
       "genre_satisfaction": 1.0,
-      "latency_ms": 2.59,
+      "latency_ms": 5.92,
       "passed": true,
       "failures": []
     },
@@ -76,14 +78,14 @@
       "n_hits": 5,
       "retrieved_ids": [
         33,
-        7,
+        29,
         32,
         35,
-        29
+        34
       ],
       "hard_constraint_ok": true,
-      "genre_satisfaction": 0.8,
-      "latency_ms": 0.96,
+      "genre_satisfaction": 1.0,
+      "latency_ms": 1.54,
       "passed": true,
       "failures": []
     },
@@ -105,7 +107,7 @@
       ],
       "hard_constraint_ok": true,
       "genre_satisfaction": 1.0,
-      "latency_ms": 0.64,
+      "latency_ms": 1.17,
       "passed": true,
       "failures": []
     },
@@ -127,7 +129,7 @@
       ],
       "hard_constraint_ok": true,
       "genre_satisfaction": 1.0,
-      "latency_ms": 0.6,
+      "latency_ms": 1.26,
       "passed": true,
       "failures": []
     },
@@ -141,15 +143,15 @@
       "guard_category": "ok",
       "n_hits": 5,
       "retrieved_ids": [
-        139,
-        161,
         60,
-        141,
-        137
+        7,
+        56,
+        59,
+        55
       ],
       "hard_constraint_ok": null,
-      "genre_satisfaction": 0.2,
-      "latency_ms": 1.78,
+      "genre_satisfaction": 1.0,
+      "latency_ms": 2.55,
       "passed": true,
       "failures": []
     },
@@ -164,14 +166,14 @@
       "n_hits": 5,
       "retrieved_ids": [
         56,
-        141,
-        185,
-        95,
-        57
+        57,
+        54,
+        61,
+        59
       ],
       "hard_constraint_ok": null,
-      "genre_satisfaction": 0.4,
-      "latency_ms": 2.45,
+      "genre_satisfaction": 1.0,
+      "latency_ms": 2.6,
       "passed": true,
       "failures": []
     },
@@ -185,15 +187,15 @@
       "guard_category": "ok",
       "n_hits": 5,
       "retrieved_ids": [
-        139,
-        161,
         60,
-        141,
-        137
+        7,
+        56,
+        59,
+        55
       ],
       "hard_constraint_ok": null,
-      "genre_satisfaction": 0.2,
-      "latency_ms": 1.35,
+      "genre_satisfaction": 1.0,
+      "latency_ms": 1.8,
       "passed": true,
       "failures": []
     },
@@ -207,15 +209,15 @@
       "guard_category": "ok",
       "n_hits": 5,
       "retrieved_ids": [
-        139,
-        161,
         60,
-        141,
-        137
+        7,
+        56,
+        59,
+        55
       ],
       "hard_constraint_ok": null,
-      "genre_satisfaction": 0.2,
-      "latency_ms": 1.24,
+      "genre_satisfaction": 1.0,
+      "latency_ms": 2.6,
       "passed": true,
       "failures": []
     },
@@ -237,7 +239,7 @@
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": 0.6,
-      "latency_ms": 1.49,
+      "latency_ms": 1.98,
       "passed": true,
       "failures": []
     },
@@ -259,7 +261,7 @@
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": 0.2,
-      "latency_ms": 2.47,
+      "latency_ms": 2.16,
       "passed": true,
       "failures": []
     },
@@ -281,7 +283,7 @@
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": 0.6,
-      "latency_ms": 1.48,
+      "latency_ms": 1.43,
       "passed": true,
       "failures": []
     },
@@ -303,7 +305,7 @@
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": 0.6,
-      "latency_ms": 1.69,
+      "latency_ms": 1.26,
       "passed": true,
       "failures": []
     },
@@ -318,14 +320,14 @@
       "n_hits": 5,
       "retrieved_ids": [
         197,
-        43,
-        193,
-        194,
-        191
+        131,
+        14,
+        40,
+        196
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.15,
+      "latency_ms": 1.43,
       "passed": true,
       "failures": []
     },
@@ -339,15 +341,15 @@
       "guard_category": "ok",
       "n_hits": 5,
       "retrieved_ids": [
-        48,
-        106,
         43,
-        137,
-        22
+        106,
+        22,
+        197,
+        139
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.92,
+      "latency_ms": 2.27,
       "passed": true,
       "failures": []
     },
@@ -362,14 +364,14 @@
       "n_hits": 5,
       "retrieved_ids": [
         197,
-        43,
-        193,
-        194,
-        191
+        131,
+        14,
+        40,
+        196
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 0.83,
+      "latency_ms": 1.34,
       "passed": true,
       "failures": []
     },
@@ -384,14 +386,14 @@
       "n_hits": 5,
       "retrieved_ids": [
         197,
-        43,
-        193,
-        194,
-        191
+        131,
+        14,
+        40,
+        196
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.06,
+      "latency_ms": 1.32,
       "passed": true,
       "failures": []
     },
@@ -407,7 +409,7 @@
       "retrieved_ids": [],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 0.31,
+      "latency_ms": 0.24,
       "passed": true,
       "failures": []
     },
@@ -429,7 +431,7 @@
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.42,
+      "latency_ms": 1.75,
       "passed": true,
       "failures": []
     },
@@ -445,7 +447,7 @@
       "retrieved_ids": [],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 0.28,
+      "latency_ms": 0.36,
       "passed": true,
       "failures": []
     },
@@ -461,7 +463,7 @@
       "retrieved_ids": [],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 0.2,
+      "latency_ms": 0.27,
       "passed": true,
       "failures": []
     },
@@ -475,15 +477,15 @@
       "guard_category": "sensitive",
       "n_hits": 5,
       "retrieved_ids": [
-        153,
         60,
-        138,
-        183,
-        54
+        54,
+        56,
+        59,
+        55
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.2,
+      "latency_ms": 2.35,
       "passed": true,
       "failures": []
     },
@@ -497,15 +499,15 @@
       "guard_category": "sensitive",
       "n_hits": 5,
       "retrieved_ids": [
-        153,
         60,
-        138,
-        183,
-        54
+        54,
+        56,
+        59,
+        55
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.13,
+      "latency_ms": 1.65,
       "passed": true,
       "failures": []
     },
@@ -519,15 +521,15 @@
       "guard_category": "sensitive",
       "n_hits": 5,
       "retrieved_ids": [
-        153,
         60,
-        138,
-        183,
-        54
+        54,
+        56,
+        59,
+        55
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.07,
+      "latency_ms": 1.65,
       "passed": true,
       "failures": []
     },
@@ -541,15 +543,15 @@
       "guard_category": "sensitive",
       "n_hits": 5,
       "retrieved_ids": [
-        153,
         60,
-        138,
-        183,
-        54
+        54,
+        56,
+        59,
+        55
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.51,
+      "latency_ms": 1.82,
       "passed": true,
       "failures": []
     },
@@ -564,14 +566,14 @@
       "n_hits": 5,
       "retrieved_ids": [
         1,
-        179,
-        27,
+        25,
         23,
-        16
+        27,
+        22
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.6,
+      "latency_ms": 1.73,
       "passed": true,
       "failures": []
     },
@@ -585,15 +587,15 @@
       "guard_category": "injection",
       "n_hits": 5,
       "retrieved_ids": [
+        1,
+        25,
         23,
-        140,
-        4,
-        74,
-        1
+        27,
+        79
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 3.1,
+      "latency_ms": 2.67,
       "passed": true,
       "failures": []
     },
@@ -608,14 +610,14 @@
       "n_hits": 5,
       "retrieved_ids": [
         1,
-        179,
-        27,
+        25,
         23,
-        16
+        27,
+        22
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.53,
+      "latency_ms": 1.66,
       "passed": true,
       "failures": []
     },
@@ -630,14 +632,14 @@
       "n_hits": 5,
       "retrieved_ids": [
         1,
-        179,
-        27,
+        25,
         23,
-        16
+        27,
+        22
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.24,
+      "latency_ms": 1.73,
       "passed": true,
       "failures": []
     },
@@ -645,6 +647,22 @@
       "id": "crisis_safe",
       "category": "required_now",
       "scenario": "local_tfidf",
+      "action": "safe_response",
+      "operating_mode": null,
+      "voice_source": "template",
+      "guard_category": "high_risk",
+      "n_hits": 0,
+      "retrieved_ids": [],
+      "hard_constraint_ok": null,
+      "genre_satisfaction": null,
+      "latency_ms": 0.05,
+      "passed": true,
+      "failures": []
+    },
+    {
+      "id": "crisis_safe",
+      "category": "required_now",
+      "scenario": "fake_hybrid",
       "action": "safe_response",
       "operating_mode": null,
       "voice_source": "template",
@@ -660,22 +678,6 @@
     {
       "id": "crisis_safe",
       "category": "required_now",
-      "scenario": "fake_hybrid",
-      "action": "safe_response",
-      "operating_mode": null,
-      "voice_source": "template",
-      "guard_category": "high_risk",
-      "n_hits": 0,
-      "retrieved_ids": [],
-      "hard_constraint_ok": null,
-      "genre_satisfaction": null,
-      "latency_ms": 0.01,
-      "passed": true,
-      "failures": []
-    },
-    {
-      "id": "crisis_safe",
-      "category": "required_now",
       "scenario": "embedding_outage",
       "action": "safe_response",
       "operating_mode": null,
@@ -685,7 +687,7 @@
       "retrieved_ids": [],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 0.01,
+      "latency_ms": 0.03,
       "passed": true,
       "failures": []
     },
@@ -701,7 +703,7 @@
       "retrieved_ids": [],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 0.01,
+      "latency_ms": 0.02,
       "passed": true,
       "failures": []
     },
@@ -717,7 +719,7 @@
       "retrieved_ids": [],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 0.09,
+      "latency_ms": 0.15,
       "passed": true,
       "failures": []
     },
@@ -733,7 +735,7 @@
       "retrieved_ids": [],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 0.07,
+      "latency_ms": 0.14,
       "passed": true,
       "failures": []
     },
@@ -749,7 +751,7 @@
       "retrieved_ids": [],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 0.07,
+      "latency_ms": 0.16,
       "passed": true,
       "failures": []
     },
@@ -765,7 +767,7 @@
       "retrieved_ids": [],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 0.07,
+      "latency_ms": 0.14,
       "passed": true,
       "failures": []
     },
@@ -779,15 +781,15 @@
       "guard_category": "ok",
       "n_hits": 5,
       "retrieved_ids": [
-        197,
-        19,
+        57,
         137,
+        19,
         43,
-        193
+        92
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.61,
+      "latency_ms": 2.96,
       "passed": true,
       "failures": []
     },
@@ -801,15 +803,15 @@
       "guard_category": "ok",
       "n_hits": 5,
       "retrieved_ids": [
-        57,
-        121,
-        187,
-        92,
-        55
+        7,
+        150,
+        97,
+        60,
+        92
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 2.61,
+      "latency_ms": 2.94,
       "passed": true,
       "failures": []
     },
@@ -823,15 +825,15 @@
       "guard_category": "ok",
       "n_hits": 5,
       "retrieved_ids": [
-        197,
-        19,
+        57,
         137,
+        19,
         43,
-        193
+        92
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.99,
+      "latency_ms": 2.29,
       "passed": true,
       "failures": []
     },
@@ -845,15 +847,15 @@
       "guard_category": "ok",
       "n_hits": 5,
       "retrieved_ids": [
-        197,
-        19,
+        57,
         137,
+        19,
         43,
-        193
+        92
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.77,
+      "latency_ms": 2.0,
       "passed": true,
       "failures": []
     },
@@ -869,7 +871,7 @@
       "retrieved_ids": [],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 0.22,
+      "latency_ms": 0.29,
       "passed": true,
       "failures": []
     },
@@ -883,15 +885,15 @@
       "guard_category": "ok",
       "n_hits": 5,
       "retrieved_ids": [
-        2,
+        70,
         125,
-        69,
-        112,
-        134
+        178,
+        134,
+        32
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.47,
+      "latency_ms": 1.92,
       "passed": true,
       "failures": []
     },
@@ -907,7 +909,7 @@
       "retrieved_ids": [],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 0.21,
+      "latency_ms": 0.26,
       "passed": true,
       "failures": []
     },
@@ -923,7 +925,7 @@
       "retrieved_ids": [],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 0.17,
+      "latency_ms": 0.24,
       "passed": true,
       "failures": []
     },
@@ -937,15 +939,15 @@
       "guard_category": "ok",
       "n_hits": 5,
       "retrieved_ids": [
-        197,
-        43,
         3,
+        132,
         192,
-        193
+        93,
+        84
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.35,
+      "latency_ms": 1.81,
       "passed": true,
       "failures": []
     },
@@ -961,13 +963,13 @@
       "retrieved_ids": [
         68,
         196,
-        155,
+        37,
         5,
-        37
+        130
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 2.21,
+      "latency_ms": 3.9,
       "passed": true,
       "failures": []
     },
@@ -981,15 +983,15 @@
       "guard_category": "ok",
       "n_hits": 5,
       "retrieved_ids": [
-        197,
-        43,
         3,
+        132,
         192,
-        193
+        93,
+        84
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.22,
+      "latency_ms": 2.06,
       "passed": true,
       "failures": []
     },
@@ -1003,15 +1005,15 @@
       "guard_category": "ok",
       "n_hits": 5,
       "retrieved_ids": [
-        197,
-        43,
         3,
+        132,
         192,
-        193
+        93,
+        84
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.21,
+      "latency_ms": 2.37,
       "passed": true,
       "failures": []
     },
@@ -1026,14 +1028,14 @@
       "n_hits": 5,
       "retrieved_ids": [
         139,
-        161,
         12,
+        161,
         141,
-        137
+        135
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": 1.0,
-      "latency_ms": 1.33,
+      "latency_ms": 2.39,
       "passed": true,
       "failures": []
     },
@@ -1047,103 +1049,103 @@
       "guard_category": "ok",
       "n_hits": 5,
       "retrieved_ids": [
-        139,
         12,
-        161,
-        189,
-        91
-      ],
-      "hard_constraint_ok": null,
-      "genre_satisfaction": 1.0,
-      "latency_ms": 1.89,
-      "passed": true,
-      "failures": []
-    },
-    {
-      "id": "cross_genre",
-      "category": "development",
-      "scenario": "embedding_outage",
-      "action": "degraded",
-      "operating_mode": "degraded",
-      "voice_source": "template",
-      "guard_category": "ok",
-      "n_hits": 5,
-      "retrieved_ids": [
         139,
         161,
-        12,
-        141,
-        137
-      ],
-      "hard_constraint_ok": null,
-      "genre_satisfaction": 1.0,
-      "latency_ms": 1.38,
-      "passed": true,
-      "failures": []
-    },
-    {
-      "id": "cross_genre",
-      "category": "development",
-      "scenario": "generation_outage",
-      "action": "recommend",
-      "operating_mode": "local",
-      "voice_source": "template",
-      "guard_category": "ok",
-      "n_hits": 5,
-      "retrieved_ids": [
-        139,
-        161,
-        12,
-        141,
-        137
-      ],
-      "hard_constraint_ok": null,
-      "genre_satisfaction": 1.0,
-      "latency_ms": 1.14,
-      "passed": true,
-      "failures": []
-    },
-    {
-      "id": "holdout_rainy",
-      "category": "holdout",
-      "scenario": "local_tfidf",
-      "action": "recommend",
-      "operating_mode": "local",
-      "voice_source": "template",
-      "guard_category": "ok",
-      "n_hits": 5,
-      "retrieved_ids": [
-        139,
-        161,
-        141,
-        137,
-        143
-      ],
-      "hard_constraint_ok": null,
-      "genre_satisfaction": null,
-      "latency_ms": 0.88,
-      "passed": true,
-      "failures": []
-    },
-    {
-      "id": "holdout_rainy",
-      "category": "holdout",
-      "scenario": "fake_hybrid",
-      "action": "recommend",
-      "operating_mode": "gemini",
-      "voice_source": "generated",
-      "guard_category": "ok",
-      "n_hits": 5,
-      "retrieved_ids": [
-        139,
-        181,
-        91,
-        77,
+        41,
         141
       ],
       "hard_constraint_ok": null,
+      "genre_satisfaction": 0.8,
+      "latency_ms": 2.57,
+      "passed": true,
+      "failures": []
+    },
+    {
+      "id": "cross_genre",
+      "category": "development",
+      "scenario": "embedding_outage",
+      "action": "degraded",
+      "operating_mode": "degraded",
+      "voice_source": "template",
+      "guard_category": "ok",
+      "n_hits": 5,
+      "retrieved_ids": [
+        139,
+        12,
+        161,
+        141,
+        135
+      ],
+      "hard_constraint_ok": null,
+      "genre_satisfaction": 1.0,
+      "latency_ms": 1.6,
+      "passed": true,
+      "failures": []
+    },
+    {
+      "id": "cross_genre",
+      "category": "development",
+      "scenario": "generation_outage",
+      "action": "recommend",
+      "operating_mode": "local",
+      "voice_source": "template",
+      "guard_category": "ok",
+      "n_hits": 5,
+      "retrieved_ids": [
+        139,
+        12,
+        161,
+        141,
+        135
+      ],
+      "hard_constraint_ok": null,
+      "genre_satisfaction": 1.0,
+      "latency_ms": 1.56,
+      "passed": true,
+      "failures": []
+    },
+    {
+      "id": "holdout_rainy",
+      "category": "holdout",
+      "scenario": "local_tfidf",
+      "action": "recommend",
+      "operating_mode": "local",
+      "voice_source": "template",
+      "guard_category": "ok",
+      "n_hits": 5,
+      "retrieved_ids": [
+        141,
+        12,
+        161,
+        3,
+        143
+      ],
+      "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 2.66,
+      "latency_ms": 1.77,
+      "passed": true,
+      "failures": []
+    },
+    {
+      "id": "holdout_rainy",
+      "category": "holdout",
+      "scenario": "fake_hybrid",
+      "action": "recommend",
+      "operating_mode": "gemini",
+      "voice_source": "generated",
+      "guard_category": "ok",
+      "n_hits": 5,
+      "retrieved_ids": [
+        141,
+        12,
+        139,
+        33,
+        41
+      ],
+      "hard_constraint_ok": null,
+      "genre_satisfaction": null,
+      "latency_ms": 3.45,
       "passed": true,
       "failures": []
     },
@@ -1157,15 +1159,15 @@
       "guard_category": "ok",
       "n_hits": 5,
       "retrieved_ids": [
-        139,
-        161,
         141,
-        137,
+        12,
+        161,
+        3,
         143
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.09,
+      "latency_ms": 1.6,
       "passed": true,
       "failures": []
     },
@@ -1179,15 +1181,15 @@
       "guard_category": "ok",
       "n_hits": 5,
       "retrieved_ids": [
-        139,
-        161,
         141,
-        137,
+        12,
+        161,
+        3,
         143
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.03,
+      "latency_ms": 1.53,
       "passed": true,
       "failures": []
     },
@@ -1202,14 +1204,14 @@
       "n_hits": 5,
       "retrieved_ids": [
         179,
-        20,
-        16,
-        175,
-        171
+        169,
+        133,
+        177,
+        180
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.49,
+      "latency_ms": 1.35,
       "passed": true,
       "failures": []
     },
@@ -1224,14 +1226,14 @@
       "n_hits": 5,
       "retrieved_ids": [
         174,
-        51,
-        181,
-        126,
-        68
+        134,
+        130,
+        176,
+        133
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 2.48,
+      "latency_ms": 2.18,
       "passed": true,
       "failures": []
     },
@@ -1246,14 +1248,14 @@
       "n_hits": 5,
       "retrieved_ids": [
         179,
-        20,
-        16,
-        175,
-        171
+        169,
+        133,
+        177,
+        180
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 1.22,
+      "latency_ms": 1.2,
       "passed": true,
       "failures": []
     },
@@ -1268,14 +1270,14 @@
       "n_hits": 5,
       "retrieved_ids": [
         179,
-        20,
-        16,
-        175,
-        171
+        169,
+        133,
+        177,
+        180
       ],
       "hard_constraint_ok": null,
       "genre_satisfaction": null,
-      "latency_ms": 0.92,
+      "latency_ms": 1.18,
       "passed": true,
       "failures": []
     }

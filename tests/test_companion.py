@@ -84,6 +84,28 @@ def test_response_carries_a_privacy_safe_trace(companion):
     assert trace.diversity_applied  # a broad query gives MMR candidates to reorder
 
 
+def test_explicit_genre_request_is_honored_over_text_retrieval(companion):
+    # "jazz" lexically overlaps blues descriptions, so the text leg alone buries
+    # jazz. The structured leg must lift real jazz into the results, and mood-based
+    # diversity must stop MMR from scattering the request across other genres.
+    result = companion.respond("some jazz please", limit=5)
+    assert result.action in (CompanionAction.RECOMMEND, CompanionAction.DEGRADED)
+    genres = [hit.track.genre for hit in result.retrieval.hits]
+    assert genres.count("jazz") >= 2  # jazz is actually present, not scattered away
+    # every returned hit records that the structured leg scored it
+    assert all(hit.structured_score is not None for hit in result.retrieval.hits)
+    # the trace names the structured signal without leaking any query text
+    assert "goals=[]" in result.trace.intent_summary  # genre-only: no numeric cues here
+
+
+def test_numeric_cue_reorders_and_records_a_goal(companion):
+    result = companion.respond("high energy workout", limit=5)
+    assert result.action in (CompanionAction.RECOMMEND, CompanionAction.DEGRADED)
+    assert result.intent.feature_goals  # a directional goal was parsed
+    assert "energy_high_v1" in result.trace.intent_summary
+    assert all(hit.structured_score is not None for hit in result.retrieval.hits)
+
+
 def test_sensitive_query_never_uses_the_generator(companion_with_voice):
     result = companion_with_voice.respond(
         "my email is alice@example.com, find me melancholy piano"

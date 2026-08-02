@@ -40,7 +40,8 @@ def _print_summary(report: dict) -> None:
     print(f"  faithfulness          : {s['faithfulness_ok']}")
     print(f"  embedding fallback    : {s['embedding_fallback_ok']}")
     print(f"  generation fallback   : {s['generation_fallback_ok']}")
-    print(f"  genre satisfaction    : {s['genre_satisfaction_avg']}")
+    print(f"  genre satisfaction    : {s['genre_satisfaction_avg']} "
+          f"(floor {s['min_genre_satisfaction']}: {s['genre_satisfaction_ok']})")
     print(f"  latency p50/p95 (ms)  : {s['latency_ms_p50']} / {s['latency_ms_p95']}")
     for category, counts in sorted(report["by_category"].items()):
         print(f"    {category:12} pass {counts['pass']:>3}  fail {counts['fail']:>3}")

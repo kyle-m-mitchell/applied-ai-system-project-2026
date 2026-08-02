@@ -47,12 +47,23 @@ class GroundingEvaluator:
             failures.append("instrumental-only constraint violated")
         if intent.exclude_explicit and any(hit.track.explicit for hit in hits):
             failures.append("clean constraint violated")
-        if any(not hit.matched_terms and hit.semantic_score is None for hit in hits):
+        if any(not self._has_evidence(hit) for hit in hits):
             failures.append("a hit carries no evidence")
         if len(hits) > intent.limit:
             failures.append("more hits than requested")
 
         return EvaluationReport(ok=not failures, failures=tuple(failures))
+
+    @staticmethod
+    def _has_evidence(hit: RetrievalHit) -> bool:
+        """A hit is grounded if any leg justifies it: matched terms, a semantic
+        similarity, or a positive structured relevance. A structured ``0.0`` is
+        "evaluated, no match" and is *not* evidence; ``None`` is "not evaluated"."""
+        return (
+            bool(hit.matched_terms)
+            or hit.semantic_score is not None
+            or (hit.structured_score is not None and hit.structured_score > 0.0)
+        )
 
     def check_grounded_text(
         self,

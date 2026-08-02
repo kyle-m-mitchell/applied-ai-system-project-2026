@@ -250,6 +250,7 @@ class RetrievalHit(ContractModel):
     matched_terms: tuple[str, ...] = ()
     semantic_score: float | None = Field(default=None, ge=0.0, le=1.0)
     lexical_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    structured_score: float | None = Field(default=None, ge=0.0, le=1.0)
     track: CatalogTrack
 
 
@@ -309,6 +310,7 @@ class ScoreComponents(ContractModel):
     lexical: float | None = Field(default=None, ge=0.0, le=1.0)
     categorical: float | None = Field(default=None, ge=0.0, le=1.0)
     numeric: float | None = Field(default=None, ge=0.0, le=1.0)
+    structured: float | None = Field(default=None, ge=0.0, le=1.0)
     personalization: float | None = Field(default=None, ge=0.0, le=1.0)
     fused: float = Field(ge=0.0, le=1.0)
     available_signals: tuple[str, ...] = ()
@@ -354,11 +356,70 @@ class GuardVerdict(ContractModel):
     reason: str = ""
 
 
+class FeatureRelation(str, Enum):
+    """The *direction* a preference points a numeric feature."""
+
+    PREFER_HIGH = "prefer_high"
+    PREFER_LOW = "prefer_low"
+    NEAR = "near"
+    AT_LEAST = "at_least"
+    AT_MOST = "at_most"
+    RANGE = "range"
+
+
+class FeatureGoal(ContractModel):
+    """A directional preference over one numeric feature — a soft signal, not a filter.
+
+    Relations express *direction*, never a fabricated target: "high energy" is
+    ``prefer_high``, not ``energy == 0.85``. ``NEAR``/``AT_LEAST``/``AT_MOST``
+    carry a ``target`` in the feature's own units (0-1, or BPM for ``tempo_bpm``);
+    ``RANGE`` carries ``low``/``high``. ``cue_id`` is a controlled identifier
+    (e.g. ``energy_low_v1``) so a preference is reproducible and auditable — never
+    free text. A goal only ever *reorders* candidates; hard constraints
+    (``instrumental_only``, ``exclude_explicit``) remove them.
+    """
+
+    NUMERIC_FEATURES: ClassVar[tuple[str, ...]] = (
+        "energy", "valence", "danceability", "acousticness", "tempo_bpm",
+    )
+
+    feature: str
+    relation: FeatureRelation
+    target: float | None = None
+    low: float | None = None
+    high: float | None = None
+    strength: float = Field(default=1.0, ge=0.0, le=1.0)
+    cue_id: str = Field(min_length=1, max_length=60)
+
+    @field_validator("feature")
+    @classmethod
+    def known_feature(cls, value: str) -> str:
+        if value not in cls.NUMERIC_FEATURES:
+            raise ValueError(f"unknown numeric feature: {value}")
+        return value
+
+    @model_validator(mode="after")
+    def require_relation_params(self) -> Self:
+        needs_target = {
+            FeatureRelation.NEAR, FeatureRelation.AT_LEAST, FeatureRelation.AT_MOST
+        }
+        if self.relation in needs_target and self.target is None:
+            raise ValueError(f"{self.relation.value} requires a target")
+        if self.relation is FeatureRelation.RANGE:
+            if self.low is None or self.high is None:
+                raise ValueError("range requires low and high")
+            if self.low > self.high:
+                raise ValueError("range low must be <= high")
+        return self
+
+
 class MusicIntent(ContractModel):
     """Structured intent parsed from a guarded query.
 
     ``query`` is the sanitized text handed to the retriever; the categorical and
     filter fields are extracted deterministically from recognizable music words.
+    ``feature_goals`` are the directional numeric preferences (soft signals) that
+    the structured leg scores; they never filter.
     """
 
     query: str = ""
@@ -366,6 +427,7 @@ class MusicIntent(ContractModel):
     mood: str | None = Field(default=None, max_length=80)
     instrumental_only: bool = False
     exclude_explicit: bool = False
+    feature_goals: tuple[FeatureGoal, ...] = ()
     limit: int = Field(default=5, ge=1, le=20)
     needs_clarification: bool = False
     clarification: str | None = None

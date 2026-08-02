@@ -55,12 +55,15 @@ public dataset) with **no playback**.
 
 ## Current status (see `docs/RUBRIC_EVIDENCE.md`)
 
-Implemented and tested offline (139 tests): the validated scorer + service, a
+Implemented and tested offline (157 tests): the validated scorer + service, a
 200-track catalog, TF-IDF + context-guide retrieval, Gemini embeddings + hybrid
 ranking (committed cache + fallback), the guard + intent parser, the bounded
 `MusicCompanion` with MMR diversity, a grounding evaluator, and Cadence's voice —
-all through the CLI; an evaluation report card; and a scoring + observability
+all through the CLI; an evaluation report card; a scoring + observability
 foundation (shared feature utilities, a unified `RankedCandidate` breakdown, the
-public `build_companion` factory, and a privacy-safe event receipt). Next:
-structured-preference ranking, a Streamlit UI, real-dataset ingestion, and
-session personalization.
+public `build_companion` factory, and a privacy-safe event receipt); and a
+structured-preference hybrid that turns "high energy", "acoustic", or a named
+genre into directional preferences, fuses them with the text leg by percentile
+rank (calibrated against the report card — genre satisfaction 0.68 → 0.86), and
+diversifies by mood so an explicit genre is honored. Next: a Streamlit UI,
+real-dataset ingestion, and session personalization.

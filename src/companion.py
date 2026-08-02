@@ -27,11 +27,12 @@ from src.contracts import (
     VoiceSource,
 )
 from src.evaluator import GroundingEvaluator
+from src.fusion import fuse_pool
 from src.generation import TextGenerator
 from src.guard import InputGuard
 from src.intent import IntentParser
 from src.observability import EventSink, NullEventSink, build_event
-from src.ranking import mmr_rerank
+from src.ranking import mmr_rerank, mood_similarity
 from src.retrieval import Retriever, TfidfRetriever
 from src.scoring import candidates_from_hits
 from src.voice import CadenceVoice
@@ -145,17 +146,29 @@ class MusicCompanion:
                 (),
             )
 
-        # Retrieve a larger pool, then diversify down to the requested count.
+        # Retrieve a pool, fuse in structured preferences (when present), then
+        # diversify down to the requested count. A larger pool when structured
+        # signal exists gives the structured leg room to lift a well-matched track
+        # from just outside the text top-k; without it, the path is today's exactly.
         sensitive = verdict.category is GuardCategory.SENSITIVE
         retriever = self._local if sensitive else self._default
+        structured_active = bool(intent.genre or intent.mood or intent.feature_goals)
+        pool_k = max(intent.limit * 8, 40) if structured_active else max(intent.limit * 4, 12)
         pool = retriever.search(
             intent.query,
-            k=max(intent.limit * 4, 12),
+            k=pool_k,
             instrumental_only=intent.instrumental_only,
             exclude_explicit=intent.exclude_explicit,
         )
         candidate_ids = tuple(hit.track.id for hit in pool.hits)
-        diversified = mmr_rerank(pool.hits, intent.limit) if pool.hits else ()
+        if structured_active and pool.hits:
+            pool = pool.model_copy(update={"hits": fuse_pool(intent, pool.hits)})
+        # When a genre is explicitly requested, diversify by mood *within* it
+        # rather than dragging in other genres against the listener's wish.
+        similarity = mood_similarity if intent.genre else None
+        diversified = (
+            mmr_rerank(pool.hits, intent.limit, similarity=similarity) if pool.hits else ()
+        )
         diversity_applied = len(pool.hits) > intent.limit
         result = pool.model_copy(update={"hits": diversified})
 
@@ -240,10 +253,16 @@ class MusicCompanion:
 
     @staticmethod
     def _intent_summary(intent: MusicIntent) -> str:
-        """A privacy-safe summary (no free-text query) for the trace."""
+        """A privacy-safe summary (no free-text query) for the trace.
+
+        Feature goals appear as their controlled cue ids (``energy_low_v1``), which
+        are provenance, not user words.
+        """
+        goals = ",".join(goal.cue_id for goal in intent.feature_goals)
         return (
             f"genre={intent.genre}, mood={intent.mood}, "
-            f"instrumental_only={intent.instrumental_only}, clean={intent.exclude_explicit}"
+            f"instrumental_only={intent.instrumental_only}, clean={intent.exclude_explicit}, "
+            f"goals=[{goals}]"
         )
 
     @staticmethod
