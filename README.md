@@ -165,5 +165,5 @@ numeric tracks are even considered. A flawed early direction was to infer missin
 mood/description fields and to research tracks *before* ranking — which would let
 generated material masquerade as source truth and could change eligibility; the
 final design instead carries provenance, abstains on the unknown, and keeps research
-strictly downstream. *(Owner: personalize before submission.)* The full action trace
+strictly downstream. The full action trace
 is in [`ai_interactions.md`](ai_interactions.md).
