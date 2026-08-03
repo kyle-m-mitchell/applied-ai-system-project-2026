@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from src.contracts import (
     CompanionAction,
@@ -13,6 +13,7 @@ from src.contracts import (
     FeatureRelation,
     GuardCategory,
     MusicIntent,
+    SessionPreference,
 )
 from src.refine import combine_guard_categories
 
@@ -44,10 +45,16 @@ class UiSession:
     snapshots: tuple[MixSnapshot, ...] = ()
     transient: CompanionTurn | None = None
     guard_category: GuardCategory = GuardCategory.OK
+    preference: SessionPreference = field(default_factory=SessionPreference)
 
     @property
     def current(self) -> MixSnapshot | None:
         return self.snapshots[-1] if self.snapshots else None
+
+
+def set_preference(state: UiSession, preference: SessionPreference) -> UiSession:
+    """Replace the session's accumulated taste (learning stays session-only)."""
+    return replace(state, preference=preference)
 
 
 def start_session(
@@ -55,11 +62,13 @@ def start_session(
     policy: ExecutionPolicy,
     *,
     catalog_id: str = "fictional",
+    preference: SessionPreference | None = None,
 ) -> UiSession:
     return UiSession(
         catalog_id=catalog_id,
         snapshots=(MixSnapshot(turn=turn, policy=policy),),
         guard_category=turn.receipt.guard_category,
+        preference=preference or SessionPreference(),
     )
 
 
@@ -101,6 +110,7 @@ def commit_turn(
         catalog_id=state.catalog_id,
         snapshots=snapshots,
         guard_category=guard_category,
+        preference=state.preference,
     )
 
 
@@ -115,6 +125,7 @@ def undo(state: UiSession) -> UiSession:
         catalog_id=state.catalog_id,
         snapshots=state.snapshots[:-1],
         guard_category=state.guard_category,
+        preference=state.preference,
     )
 
 

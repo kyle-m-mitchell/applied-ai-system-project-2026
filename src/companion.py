@@ -45,6 +45,7 @@ from src.ranking import diversity_parameters, mmr_rerank, mood_similarity
 from src.refine import combine_guard_categories, merge_intents
 from src.retrieval import Retriever, TfidfRetriever
 from src.scoring import candidates_from_hits
+from src.session_preference import session_ranked_hits
 from src.voice import CadenceVoice
 
 
@@ -123,10 +124,6 @@ class MusicCompanion:
             and "instrumentalness"
             in catalog_descriptor.capabilities.supported_features
         )
-        self._parser = IntentParser(
-            experimental_mood_axes=is_fma,
-            soft_instrumentalness=is_fma and supports_instrumentalness,
-        )
         self._evaluator = GroundingEvaluator()
         self._voice = CadenceVoice(self._evaluator)
         self._generator = generator
@@ -137,6 +134,15 @@ class MusicCompanion:
             set(valid_genres)
             if valid_genres is not None
             else {track.genre for track in tracks if track.genre is not None}
+        )
+        # Build the parser once the catalog's genre vocabulary is known so it can
+        # actually "hear" the active catalog's genres (FMA carries ~55 the
+        # fictional vocabulary never mentions).  The fictional control passes no
+        # extra genres, keeping its regression parse byte-for-byte identical.
+        self._parser = IntentParser(
+            experimental_mood_axes=is_fma,
+            soft_instrumentalness=is_fma and supports_instrumentalness,
+            catalog_genres=tuple(self._valid_genres) if is_fma else (),
         )
         self._valid_moods = (
             set(valid_moods)
@@ -530,6 +536,14 @@ class MusicCompanion:
         if structured_active and pool.hits and not intent_aware:
             pool = pool.model_copy(update={"hits": fuse_pool(intent, pool.hits)})
         comparison = _build_comparison(text_hits, pool.hits, structured_active)
+        # Session-only taste (accumulated from feedback) nudges the pool before
+        # diversity. It rides on the policy, never on the shared engine, so two
+        # sessions stay isolated; an absent or disabled preference is a no-op that
+        # reproduces today's ranking exactly.
+        if pool.hits and policy.preference is not None and policy.preference.is_active:
+            pool = pool.model_copy(
+                update={"hits": session_ranked_hits(pool.hits, policy.preference)}
+            )
         # When a genre is explicitly requested, diversify by mood *within* it
         # rather than dragging in other genres against the listener's wish.
         similarity = mood_similarity if intent.genre else None
@@ -552,6 +566,27 @@ class MusicCompanion:
         result = pool.model_copy(update={"hits": diversified})
 
         evaluation = self._evaluator.evaluate_result(intent, diversified, self._valid_ids)
+
+        # Best effort: rather than refuse a real request, offer an honestly-labeled
+        # diverse starting set the listener can shape. Only genuinely empty input
+        # (handled earlier as clarify) leaves without music. Hard-constrained misses
+        # still say no_match — an exploratory sample can't prove clean/instrumental.
+        exploratory = False
+        if (not diversified or not evaluation.ok) and not (
+            intent.instrumental_only or intent.exclude_explicit
+        ):
+            sample = self._exploratory_set(retriever, intent, policy)
+            if sample is not None and sample.hits:
+                # Inherit the attempted retrieval's operating mode so an outage
+                # still reads as degraded rather than a clean local result.
+                result = sample.model_copy(
+                    update={"operating_mode": result.operating_mode}
+                )
+                diversified = sample.hits
+                comparison = None
+                evaluation = EvaluationReport(ok=True)
+                diversity_applied = True
+                exploratory = True
 
         if not diversified or not evaluation.ok:
             # The trace and request-local receipt retain the attempted/rejected
@@ -594,7 +629,9 @@ class MusicCompanion:
         # One failed provider leg is enough for this interactive turn. Do not
         # immediately spend a second retry budget on optional microcopy selection.
         generator = None if force_local or provider_failed else self._generator
-        voice = self._voice.render(diversified, intent, generator=generator)
+        voice = self._voice.render(
+            diversified, intent, generator=generator, exploratory=exploratory
+        )
         message = self._decorate(voice.message, category)
         intro_message = self._decorate(voice.framing, category)
 
@@ -625,12 +662,40 @@ class MusicCompanion:
                         result.embedding_source is EmbeddingSource.LIVE
                     )
                     or voice.network_used,
-                    fallback_reason=voice.fallback_reason,
+                    fallback_reason="exploratory" if exploratory else voice.fallback_reason,
                 ),
             ),
             candidate_ids,
             comparison,
         )
+
+    def _exploratory_set(
+        self,
+        retriever: Retriever,
+        intent: MusicIntent,
+        policy: ExecutionPolicy,
+    ) -> RetrievalResult | None:
+        """A diverse, real, honestly-labeled starting set when nothing matched.
+
+        Uses the retriever's deterministic genre-spread sampler (if it has one),
+        then applies session taste and MMR so the set is varied and shapeable. The
+        tracks are real and grounded; the honesty is in the voice's framing, not a
+        pretended query match.
+        """
+        sampler = getattr(retriever, "sample_diverse", None)
+        if not callable(sampler):
+            return None
+        pool = sampler(max(intent.limit * 4, 20))
+        hits = session_ranked_hits(pool.hits, policy.preference)
+        if not hits:
+            return None
+        lambda_, relevance_floor = diversity_parameters(policy.diversity)
+        diversified = mmr_rerank(
+            hits, intent.limit, lambda_=lambda_, relevance_floor=relevance_floor
+        )
+        if not diversified:
+            return None
+        return pool.model_copy(update={"hits": diversified})
 
     def _receipt(
         self,

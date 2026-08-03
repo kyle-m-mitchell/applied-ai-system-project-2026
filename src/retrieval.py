@@ -26,6 +26,7 @@ import re
 from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Sequence
+from itertools import zip_longest
 from pathlib import Path
 from typing import Any
 
@@ -487,6 +488,43 @@ class TfidfRetriever(Retriever):
             operating_mode=OperatingMode.LOCAL,
         )
 
+    def sample_diverse(self, k: int = 5) -> RetrievalResult:
+        """A deterministic, genre-spread starting set for an unmatched request.
+
+        This is an honest best-effort: real catalog tracks, interleaved across
+        genres by id, carrying no matched terms because they were not matched to a
+        query. The companion labels the set exploratory rather than claiming a fit.
+        """
+        if k < 1:
+            raise ValueError("k must be at least 1")
+        by_genre: dict[str, list[CatalogTrack]] = {}
+        for track in self._tracks:
+            by_genre.setdefault(track.genre, []).append(track)
+        queues = [sorted(group, key=lambda t: t.id) for _, group in sorted(by_genre.items())]
+        interleaved = [
+            track
+            for column in zip_longest(*queues)
+            for track in column
+            if track is not None
+        ]
+        hits = tuple(
+            RetrievalHit(
+                source_type=SourceType.CATALOG,
+                source_id=track.ref.source_id,
+                content_hash=self._content_hashes[track.id],
+                fields_used=document_fields_used(track),
+                score=0.5,  # uniform: a starting sample, not a relevance claim
+                track=track,
+            )
+            for track in interleaved[:k]
+        )
+        return RetrievalResult(
+            query="",
+            hits=hits,
+            index_fingerprint=self._fingerprint,
+            operating_mode=OperatingMode.LOCAL,
+        )
+
 
 # Default hybrid weights: semantic leads, lexical anchors. Configurable so the
 # handbook's fuller 55/35/10 (adding the numeric scorer and session feedback)
@@ -593,6 +631,10 @@ class EmbeddingRetriever(Retriever):
         if self._cache is None:
             return None
         return self._cache.vectors.get(track_id)
+
+    def sample_diverse(self, k: int = 5) -> RetrievalResult:
+        """A best-effort starting set — delegated to the lexical fallback."""
+        return self._fallback.sample_diverse(k)
 
     def _degraded(
         self,
@@ -725,6 +767,10 @@ class HybridRetriever(Retriever):
     def index_fingerprint(self) -> str:
         """Identify the hybrid: weights plus both sub-index fingerprints."""
         return self._fingerprint
+
+    def sample_diverse(self, k: int = 5) -> RetrievalResult:
+        """A best-effort starting set — delegated to the lexical sub-retriever."""
+        return self._tfidf.sample_diverse(k)
 
     def _degraded(
         self,

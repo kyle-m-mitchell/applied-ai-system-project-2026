@@ -26,10 +26,10 @@
       "expect": {"action": "recommend", "guard_category": "ok", "min_hits": 1}
     },
     {
-      "id": "gibberish_no_match",
+      "id": "gibberish_best_effort",
       "category": "required_now",
       "query": "xyzzy zzz qqq",
-      "expect": {"action": "no_match"}
+      "expect": {"action": "recommend", "min_hits": 1}
     },
     {
       "id": "pii_local",
@@ -50,9 +50,15 @@
       "expect": {"action": "safe_response", "guard_category": "high_risk"}
     },
     {
-      "id": "vague_clarify",
+      "id": "vague_best_effort",
       "category": "required_now",
       "query": "music",
+      "expect": {"action": "recommend", "min_hits": 1}
+    },
+    {
+      "id": "empty_clarify",
+      "category": "required_now",
+      "query": "   ",
       "expect": {"action": "clarify"}
     },
     {

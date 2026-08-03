@@ -59,16 +59,31 @@ class CadenceVoice:
     def __init__(self, evaluator: GroundingEvaluator | None = None) -> None:
         self._evaluator = evaluator if evaluator is not None else GroundingEvaluator()
 
+    EXPLORATORY_FRAMING = (
+        "I wasn't sure exactly what you meant, so here's a varied starting "
+        "point — shape it below."
+    )
+
     def render(
         self,
         hits: Sequence[RetrievalHit],
         intent: MusicIntent,
         *,
         generator: TextGenerator | None = None,
+        exploratory: bool = False,
     ) -> VoiceResult:
         """Render a track set in Cadence's voice, falling back safely."""
         track_block = self._render_tracks(hits)
         template_framing = self._template_framing(intent)
+
+        # A best-effort starting set is framed honestly and deterministically; the
+        # provider only knows "we matched your request" lines, which would overclaim.
+        if exploratory:
+            return VoiceResult(
+                f"{self.EXPLORATORY_FRAMING}\n{track_block}",
+                VoiceSource.TEMPLATE,
+                framing=self.EXPLORATORY_FRAMING,
+            )
 
         if generator is None:
             return VoiceResult(

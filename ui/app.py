@@ -42,6 +42,12 @@ from ui.components import (
 )
 from ui.examples import examples_for_catalog
 from ui.runtime import RuntimeBundle, get_runtime
+from src.session_preference import (
+    apply_fit_missed,
+    apply_like,
+    apply_suggest_less,
+    clear_learning,
+)
 from ui.state import (
     UiSession,
     commit_turn,
@@ -49,6 +55,7 @@ from ui.state import (
     describe_intent_delta,
     dismiss_transient,
     feature_direction,
+    set_preference,
     start_session,
     tempo_target,
     undo,
@@ -59,6 +66,7 @@ from ui.theme import inject_theme
 STATE_KEY = "cadence_ui_session"
 LOCAL_KEY = "cadence_local_only"
 DEV_KEY = "cadence_developer_view"
+LEARN_KEY = "cadence_learn_from_feedback"
 PENDING_SEARCH_KEY = "cadence_pending_search"
 CATALOG_KEY = "cadence_catalog"
 RESEARCH_KEY = "cadence_research_cache"
@@ -137,7 +145,11 @@ def _capture_and_clear(widget_key: str, pending_key: str) -> None:
 
 
 def _policy(local_only: bool, diversity: DiversityLevel) -> ExecutionPolicy:
-    return ExecutionPolicy(force_local=local_only, diversity=diversity)
+    return ExecutionPolicy(
+        force_local=local_only,
+        diversity=diversity,
+        preference=_state().preference,  # session-only taste; never on the shared engine
+    )
 
 
 def _run_initial(bundle: RuntimeBundle, prompt: str, local_only: bool) -> None:
@@ -163,7 +175,11 @@ def _run_initial(bundle: RuntimeBundle, prompt: str, local_only: bool) -> None:
             )
         )
     else:
-        _set_state(start_session(turn, selected, catalog_id=bundle.catalog_id))
+        _set_state(
+            start_session(
+                turn, selected, catalog_id=bundle.catalog_id, preference=state.preference
+            )
+        )
     st.rerun()
 
 
@@ -636,6 +652,64 @@ def _announce_turn(turn) -> None:
         announce("A safety response is shown; no music set was built.")
 
 
+_FEEDBACK = {"like": apply_like, "less": apply_suggest_less, "missed": apply_fit_missed}
+_FEEDBACK_LABEL = {
+    "like": "👍 more tracks like that",
+    "less": "👎 fewer tracks like that",
+    "missed": "⚑ set aside a track that didn't fit",
+}
+
+
+def _apply_feedback(bundle: RuntimeBundle, local_only: bool, track, kind: str) -> None:
+    """Learn from one tap (session-only) and re-rank the current set."""
+    state = _state()
+    current = state.current
+    if current is None or current.turn.response.intent is None:
+        return
+    _set_state(set_preference(state, _FEEDBACK[kind](state.preference, track)))
+    policy = _policy(local_only, current.policy.diversity)  # picks up the new taste
+    intent = current.turn.response.intent
+    with st.spinner("Re-ranking with your feedback…"):
+        turn = bundle.companion.respond_with_intent_detailed(
+            intent, category=_state().guard_category, policy=policy
+        )
+    _clear_dynamic_widgets()
+    _set_state(commit_turn(_state(), turn, policy, (f"Learned: {_FEEDBACK_LABEL[kind]}.",)))
+    st.rerun()
+
+
+def _clear_learning_callback() -> None:
+    state = _state()
+    _set_state(set_preference(state, clear_learning(state.preference)))
+
+
+def _render_taste_drift(local_only: bool) -> None:
+    """Show the session's accumulated taste and offer to clear it (reversible)."""
+    pref = _state().preference
+    if not pref.is_active:
+        return
+    names = {
+        "energy": "energy", "valence": "brightness", "danceability": "movement",
+        "acousticness": "acoustic texture", "instrumentalness": "instrumental character",
+    }
+    drift = [
+        f"{'more' if weight > 0 else 'less'} {names.get(feature, feature)}"
+        for feature, weight in pref.feature_bias.items()
+    ]
+    drift += [
+        f"{'more' if weight > 0 else 'less'} {genre}"
+        for genre, weight in pref.genre_bias.items()
+    ]
+    with st.container(border=True, key="taste_drift"):
+        st.markdown('<h2 class="cadence-eyebrow">Your taste this session</h2>', unsafe_allow_html=True)
+        st.caption(
+            "Learned only from your taps, only in this session. It nudges ordering; "
+            "it never overrides what you ask for."
+            + (f" Leaning toward {', '.join(drift)}." if drift else "")
+        )
+        st.button("Clear learning", on_click=_clear_learning_callback, icon=":material/mop:")
+
+
 def _render_results(bundle: RuntimeBundle, local_only: bool, developer: bool) -> None:
     state = _state()
     current = state.current
@@ -678,8 +752,14 @@ def _render_results(bundle: RuntimeBundle, local_only: bool, developer: bool) ->
             unsafe_allow_html=True,
         )
         render_framing(turn)
+        # Research is an explicit, per-track action that sends ONLY the track's
+        # public title + artist — never the listener's request, history, or
+        # preferences — so it may reach the web even in local-only mode. A privacy
+        # lock (sensitive input this session) still forces the provider-free summary.
         research_agent = (
-            bundle.provider_free_research_agent if local_only else bundle.research_agent
+            bundle.provider_free_research_agent
+            if _state().guard_category is GuardCategory.SENSITIVE
+            else bundle.research_agent
         )
         render_track_cards(
             turn,
@@ -687,9 +767,11 @@ def _render_results(bundle: RuntimeBundle, local_only: bool, developer: bool) ->
             developer=developer,
             research_agent=research_agent,
             research_cache=_research_cache(),
+            on_feedback=lambda track, kind: _apply_feedback(bundle, local_only, track, kind),
         )
     with console_col:
         _render_taste_console(bundle, local_only)
+        _render_taste_drift(local_only)
 
     _render_follow_up(bundle, local_only)
 
@@ -754,6 +836,8 @@ def run() -> None:
         st.session_state[LOCAL_KEY] = True
     if DEV_KEY not in st.session_state:
         st.session_state[DEV_KEY] = False
+    if LEARN_KEY not in st.session_state:
+        st.session_state[LEARN_KEY] = True
     privacy_locked = state.guard_category is GuardCategory.SENSITIVE
     if privacy_locked:
         # Make the visible control agree with the backend's monotonic lock.
@@ -790,6 +874,17 @@ def run() -> None:
             key=DEV_KEY,
             help="Shows request-local IDs, timings, provenance, and fingerprints—never prompt text.",
         )
+        learn = st.toggle(
+            "Learn from my feedback",
+            key=LEARN_KEY,
+            help="Session-only: your 👍/👎/⚑ taps nudge ordering. Off = don't learn.",
+        )
+        if learn != _state().preference.enabled:
+            _set_state(
+                set_preference(
+                    _state(), _state().preference.model_copy(update={"enabled": learn})
+                )
+            )
         render_privacy_explainer()
         if privacy_locked:
             st.warning(

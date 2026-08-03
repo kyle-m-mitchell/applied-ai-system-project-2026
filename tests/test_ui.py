@@ -199,8 +199,7 @@ def test_first_run_and_normal_ids_match_the_public_service():
 @pytest.mark.parametrize(
     "query, action",
     [
-        ("music", CompanionAction.CLARIFY),
-        ("xyzzy zzz qqq", CompanionAction.NO_MATCH),
+        ("   ", CompanionAction.CLARIFY),  # only genuinely-empty input clarifies now
         ("i want to end my life", CompanionAction.SAFE_RESPONSE),
     ],
 )
@@ -214,6 +213,15 @@ def test_graceful_non_recommendation_states(query, action):
         assert not any(
             '<div class="cadence-track-head">' in block.value for block in app.markdown
         )
+
+
+@pytest.mark.parametrize("query", ["music", "surprise me", "xyzzy zzz qqq"])
+def test_vague_and_open_requests_get_an_honest_best_effort_set(query):
+    app = _start(query)
+    turn = _session(app).current.turn
+    assert not app.exception
+    assert turn.response.action is CompanionAction.RECOMMEND
+    assert len(turn.response.retrieval.hits) >= 1
 
 
 def test_pii_is_not_echoed_and_sensitive_turn_is_provider_free():
@@ -270,13 +278,15 @@ def test_failed_new_mix_is_transient_and_preserves_the_working_set():
     app = _start("some jazz please")
     original = _session(app).current
 
-    _input(app, "Start a new direction").set_value("xyzzy zzz qqq")
+    # Gibberish now yields an exploratory set, so a *genuinely* failed replacement
+    # is an empty one — it must stay transient and preserve the working mix.
+    _input(app, "Start a new direction").set_value("   ")
     next(button for button in app.button if button.label == "Build a new set").click()
     app.run()
     state = _session(app)
 
     assert state.transient is not None
-    assert state.transient.response.action is CompanionAction.NO_MATCH
+    assert state.transient.response.action is CompanionAction.CLARIFY
     assert len(state.snapshots) == 1
     assert state.current.turn.receipt.request_id == original.turn.receipt.request_id
     assert state.current.turn.receipt.final_ids == original.turn.receipt.final_ids
@@ -465,7 +475,9 @@ def test_sensitive_transient_and_undo_cannot_downgrade_the_session_privacy_lock(
 
 
 def test_sensitive_non_result_still_exposes_request_local_developer_evidence():
-    app = _start("hidden@example.com music", local_only=False)
+    # A bare email redacts to nothing searchable, so this stays a clarify — a
+    # sensitive turn with no music result, which must still expose dev evidence.
+    app = _start("hidden@example.com", local_only=False)
     assert _session(app).current.turn.response.action is CompanionAction.CLARIFY
     app.toggle[1].set_value(True)
     app.run()
@@ -517,6 +529,42 @@ def test_accessibility_status_and_skip_link_render():
     assert "cadence-skip" in blob  # keyboard skip link to results
     assert 'aria-live="polite"' in blob  # polite screen-reader status region
     assert "New set ready with" in blob
+
+
+def _toggle(app: AppTest, label: str):
+    return next(item for item in app.toggle if item.label == label)
+
+
+def test_feedback_tap_learns_session_taste_and_records_an_evolution_step():
+    app = _start("something upbeat", catalog="fictional")
+    before = _session(app).current.turn.receipt.request_id
+
+    _current_button(app, "👍 More like this").click()
+    app.run()
+    state = _session(app)
+    assert not app.exception
+    assert len(state.snapshots) == 2
+    assert state.preference.is_active  # taste accumulated, session-only
+    assert state.current.turn.receipt.request_id != before
+    assert any(
+        snapshot.evolution and "Learned" in " ".join(snapshot.evolution.changes)
+        for snapshot in state.snapshots
+    )
+
+
+def test_dont_learn_toggle_and_clear_learning_are_honored():
+    app = _start("something upbeat", catalog="fictional")
+    _current_button(app, "👍 More like this").click()
+    app.run()
+    assert _session(app).preference.is_active
+
+    _current_button(app, "Clear learning").click()
+    app.run()
+    assert not _session(app).preference.is_active  # cleared, reversible
+
+    _toggle(app, "Learn from my feedback").set_value(False)
+    app.run()
+    assert _session(app).preference.enabled is False
 
 
 def test_developer_toggle_is_presentation_only():

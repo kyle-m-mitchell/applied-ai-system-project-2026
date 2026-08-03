@@ -15,6 +15,7 @@ so a parsed preference is reproducible and auditable rather than free text.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
 from src.contracts import FeatureGoal, FeatureRelation, MusicIntent
 from src.recommender import GENRE_TO_FAMILY, MOOD_TO_FAMILY
@@ -22,7 +23,8 @@ from src.recommender import GENRE_TO_FAMILY, MOOD_TO_FAMILY
 
 # Longest phrases first so multi-word genres/moods win over a shorter substring
 # (e.g. "indie pop" before "pop").
-_GENRES: tuple[str, ...] = tuple(sorted(GENRE_TO_FAMILY, key=len, reverse=True))
+# Genre vocabulary is now built per-parser (catalog-aware) in ``IntentParser``;
+# moods stay a shared constant since they are authored, fictional-only facts.
 _MOODS: tuple[str, ...] = tuple(sorted(MOOD_TO_FAMILY, key=len, reverse=True))
 
 _INSTRUMENTAL_CUES = ("instrumental", "no vocals", "no lyrics", "without vocals", "no singing")
@@ -99,6 +101,15 @@ _TEMPO_NEAR = re.compile(r"(?:around|about|near|roughly|~)?\s*(\d{2,3})\s*bpm")
 
 _TOKEN = re.compile(r"[a-z0-9&]+")
 REDACTED_TOKEN = "[redacted]"  # kept out of the searchable-token count
+
+# Explicit invitations to choose freely. These should never clarify or refuse;
+# they ask Cadence to offer a varied starting set the listener can then shape.
+_OPEN_REQUEST_CUES = (
+    "surprise me", "surprise", "anything", "whatever", "random", "randomize",
+    "shuffle", "your pick", "you pick", "you choose", "you decide", "dealer's choice",
+    "i don't know", "idk", "no idea", "not sure", "to vibe", "something to vibe",
+    "vibe", "recommend", "recommendation", "just play", "play something", "any music",
+)
 
 # These words carry useful activity context even though they also imply a typed
 # preference. Keep them in the neutral query when a preference is replaced; the
@@ -269,9 +280,37 @@ class IntentParser:
         *,
         experimental_mood_axes: bool = False,
         soft_instrumentalness: bool = False,
+        catalog_genres: Sequence[str] = (),
     ) -> None:
         self._experimental_mood_axes = experimental_mood_axes
         self._soft_instrumentalness = soft_instrumentalness
+        # Recognize the *active* catalog's own genre vocabulary, not only the
+        # fictional control's.  Without this the FMA parser is deaf to most of
+        # its 55 genres (electronic, techno, punk, rap, experimental, …), so
+        # "Cadence heard" comes up empty for perfectly clear requests.  Catalog
+        # genres win the canonical spelling (so the structured leg matches the
+        # stored value); the fictional vocabulary stays as an always-present
+        # fallback so common words still parse.  Genres that collide with a hard
+        # eligibility cue ("instrumental", "kid-friendly") are left to that cue
+        # rather than double-classified.  A hyphen/slash spacing variant is also
+        # registered so "hip hop" resolves to the stored "hip-hop".
+        reserved = set(_INSTRUMENTAL_CUES) | set(_CLEAN_CUES)
+        lookup: dict[str, str] = {}
+
+        def _register(raw: str) -> None:
+            canonical = " ".join(raw.strip().lower().split())
+            if not canonical or canonical in reserved:
+                return
+            lookup.setdefault(canonical, canonical)
+            spaced = " ".join(canonical.replace("-", " ").replace("/", " ").split())
+            lookup.setdefault(spaced, lookup[canonical])
+
+        for raw in catalog_genres:
+            _register(raw)
+        for raw in GENRE_TO_FAMILY:
+            _register(raw)
+        self._genre_lookup = lookup
+        self._genres = tuple(sorted(lookup, key=len, reverse=True))
 
     def _catalog_goals(self, lowered: str) -> tuple[FeatureGoal, ...]:
         """Add catalog-specific soft goals while preserving explicit conflicts."""
@@ -319,7 +358,8 @@ class IntentParser:
             _has_phrase(hard_filter_text, cue) for cue in _INSTRUMENTAL_CUES
         )
         exclude_explicit = any(_has_phrase(lowered, cue) for cue in _CLEAN_CUES)
-        genre = next((g for g in _GENRES if _has_phrase(lowered, g)), None)
+        matched_genre = next((g for g in self._genres if _has_phrase(lowered, g)), None)
+        genre = self._genre_lookup.get(matched_genre) if matched_genre else None
         mood = next((m for m in _MOODS if _has_phrase(lowered, m)), None)
         quadrant_present = self._experimental_mood_axes and any(
             _has_phrase(lowered, label) for label in _QUADRANT_GOALS
@@ -348,14 +388,13 @@ class IntentParser:
                 ),
             )
 
-        recognized = bool(
-            genre or mood or instrumental_only or exclude_explicit or feature_goals
-        )
+        open_request = any(_has_phrase(lowered, cue) for cue in _OPEN_REQUEST_CUES)
         searchable = _TOKEN.findall(lowered.replace(REDACTED_TOKEN, " "))
 
-        # Clarify only when nothing was recognized and there is too little to
-        # search on; otherwise let the retriever work on the free text.
-        if not recognized and len(searchable) < 2:
+        # Clarify only when the guarded query carries nothing to act on at all.
+        # Any real words go to retrieval, and the companion offers an honest
+        # best-effort set rather than refusing a legitimate, if vague, request.
+        if not searchable:
             return MusicIntent(
                 query=text,
                 limit=limit,
@@ -370,5 +409,6 @@ class IntentParser:
             instrumental_only=instrumental_only,
             exclude_explicit=exclude_explicit,
             feature_goals=feature_goals,
+            open_request=open_request,
             limit=limit,
         )

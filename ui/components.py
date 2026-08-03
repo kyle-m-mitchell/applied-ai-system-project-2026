@@ -210,6 +210,11 @@ def _goal_label(cue_id: str) -> str:
         return "less movement"
     if cue_id.startswith("ui_acousticness_low"):
         return "less acoustic"
+    if cue_id.startswith("mood_"):
+        # Experimental quadrant goal (``mood_<quadrant>_<feature>_<relation>_v1``).
+        # Present the listener-facing quadrant word, not its numeric axes.
+        parts = cue_id.split("_")
+        return f"{parts[1]} feel" if len(parts) > 1 else "mood"
     return cue_id.replace("_v1", "").replace("ui_", "").replace("_", " ")
 
 
@@ -228,12 +233,32 @@ def render_intent(
     """
     st.markdown('<h2 class="cadence-eyebrow">Cadence heard</h2>', unsafe_allow_html=True)
     removable: list[tuple[str, str, str]] = []
+    seen_labels: set[str] = set()
     if intent.genre:
-        removable.append(("genre", f"Genre · {intent.genre}", "blue"))
+        label = f"Genre · {intent.genre}"
+        removable.append(("genre", label, "blue"))
+        seen_labels.add(label)
     if intent.mood:
-        removable.append(("mood", f"Mood · {intent.mood}", "violet"))
+        label = f"Mood · {intent.mood}"
+        removable.append(("mood", label, "violet"))
+        seen_labels.add(label)
     for goal in intent.feature_goals:
-        removable.append((goal.cue_id, _goal_label(goal.cue_id), "primary"))
+        label = _goal_label(goal.cue_id)
+        if label in seen_labels:
+            # Collapse the two numeric axes of one mood quadrant into one chip.
+            continue
+        seen_labels.add(label)
+        removable.append((goal.cue_id, label, "primary"))
+
+    has_hard = intent.instrumental_only or intent.exclude_explicit
+    if not removable and not has_hard:
+        # Never leave "Cadence heard" visually empty: say plainly that nothing
+        # structured was pinned down and the raw words still drove retrieval.
+        st.caption(
+            "No specific genre, mood, or preference to pin down — I searched on the "
+            "words in your request. Steer it with the Taste Console or a quick follow-up."
+        )
+        return
 
     with st.container(horizontal=True, gap="small", key=f"intent_badges_{token}"):
         for facet, label, color in removable:
@@ -471,17 +496,34 @@ def _local_track_summary(track: CatalogTrack) -> str:
 def _render_research_outcome(outcome: ResearchOutcome, track: CatalogTrack) -> None:
     brief = outcome.brief
     if brief.status is ResearchStatus.PUBLISHED:
-        st.success(
-            "Identity resolved and every published claim has a validated citation.",
-            icon=":material/fact_check:",
-        )
-        citations = {item.citation_id: item for item in brief.citations}
-        for claim in brief.claims:
-            st.write(claim.text)
-            st.caption(
-                "Cited by: "
-                + ", ".join(citations[item].source_domain for item in claim.citation_ids)
+        if brief.identity_confidence is None:
+            st.warning(
+                "Identity not verified against MusicBrainz — this note comes from a web "
+                "search for the title and artist and may describe a different recording. "
+                "Sources are cited below.",
+                icon=":material/help:",
             )
+        else:
+            st.success(
+                "Identity resolved and every published claim has a validated citation.",
+                icon=":material/fact_check:",
+            )
+        citations = {item.citation_id: item for item in brief.citations}
+        if brief.narrative:
+            # The model's grounded creative presentation, drawn from the cited
+            # sources below. Escaped and shown as Cadence's note, not catalog truth.
+            st.markdown(
+                f'<div class="cadence-framing">{_e(brief.narrative)}</div>',
+                unsafe_allow_html=True,
+            )
+            st.caption("Cadence's note, written from the cited sources below.")
+        with st.expander("Cited points", icon=":material/format_list_bulleted:"):
+            for claim in brief.claims:
+                st.write(claim.text)
+                st.caption(
+                    "Cited by: "
+                    + ", ".join(citations[item].source_domain for item in claim.citation_ids)
+                )
         st.markdown("**Validated sources**")
         for index, citation in enumerate(brief.citations, start=1):
             st.link_button(
@@ -495,6 +537,19 @@ def _render_research_outcome(outcome: ResearchOutcome, track: CatalogTrack) -> N
             )
         if brief.timestamp:
             st.caption(f"Session-only research · {brief.timestamp}")
+    elif brief.status is ResearchStatus.CATALOG_NOTE and brief.narrative:
+        st.info(
+            "Live web sources weren't available, so this is Cadence's note written "
+            "from the catalog — flavor, not verified facts about the artist.",
+            icon=":material/auto_awesome:",
+        )
+        st.markdown(
+            f'<div class="cadence-framing">{_e(brief.narrative)}</div>',
+            unsafe_allow_html=True,
+        )
+        st.caption("Deterministic local summary: " + _local_track_summary(track))
+        if brief.timestamp:
+            st.caption(f"Session-only · {brief.timestamp}")
     else:
         warning = brief.warnings[0] if brief.warnings else "Research could not be verified."
         st.warning(warning, icon=":material/search_off:")
@@ -515,12 +570,14 @@ def render_track_cards(
     developer: bool = False,
     research_agent: TrackResearchAgent | None = None,
     research_cache: MutableMapping[str, ResearchOutcome] | None = None,
+    on_feedback: Callable[[object, str], None] | None = None,
 ) -> None:
     response = turn.response
     if response.retrieval is None:
         return
     candidates = candidates_from_hits(response.retrieval.hits)
     sensitive = turn.receipt.guard_category is GuardCategory.SENSITIVE
+    token = turn.receipt.request_id[:10]
     for rank, candidate in enumerate(candidates, start=1):
         track = candidate.track
         source_key = track.ref.source_id.replace(":", "_")
@@ -657,9 +714,11 @@ def render_track_cards(
             ):
                 st.markdown("**Optional track research**")
                 st.caption(
-                    "Only this title and artist are sent for exact MusicBrainz identity "
-                    "resolution. When enabled, grounded search receives that resolved "
-                    "public identity. Your request, history, and preferences stay local."
+                    "Clicking sends only this track's title and artist to the web "
+                    "(MusicBrainz, then grounded search) — never your request, history, "
+                    "or preferences — so it works even in local-only mode. It runs after "
+                    "ranking and can't change this recommendation. A privacy lock keeps "
+                    "it fully local."
                 )
                 cached = research_cache.get(track.ref.source_id)
                 if cached is None:
@@ -674,6 +733,24 @@ def render_track_cards(
                         st.rerun()
                 else:
                     _render_research_outcome(cached, track)
+
+            if on_feedback is not None:
+                with st.container(horizontal=True, gap="small", key=f"fb_{token}_{track.id}"):
+                    if st.button(
+                        "👍 More like this", key=f"fb_like_{token}_{track.id}",
+                        type="tertiary", help="Learn toward this track (this session only)",
+                    ):
+                        on_feedback(track, "like")
+                    if st.button(
+                        "👎 Fewer like this", key=f"fb_less_{token}_{track.id}",
+                        type="tertiary", help="Learn away from this track's character",
+                    ):
+                        on_feedback(track, "less")
+                    if st.button(
+                        "⚑ Didn't fit", key=f"fb_missed_{token}_{track.id}",
+                        type="tertiary", help="Set this one aside for the session",
+                    ):
+                        on_feedback(track, "missed")
 
             source_note = (
                 "FMA catalog record · no playback"

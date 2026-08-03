@@ -736,6 +736,32 @@ class FmaCatalogStore:
             for row in rows
         )
 
+    def sample_diverse(self, k: int = DEFAULT_TEXT_LIMIT) -> tuple[CatalogStoreHit, ...]:
+        """A deterministic genre-spread starting sample for an unmatched request.
+
+        Interleaves tracks across ``primary_genre`` (row 1 of every genre, then row
+        2, …) so a "surprise me" set is varied and reproducible, not id-clustered.
+        """
+        k = _bounded_limit(k)
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                WITH ranked AS (
+                    SELECT track_id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY primary_genre ORDER BY track_id
+                           ) AS rn
+                    FROM tracks
+                )
+                SELECT track_id FROM ranked ORDER BY rn, track_id LIMIT ?
+                """,
+                (k,),
+            ).fetchall()
+        return tuple(
+            CatalogStoreHit(track_id=int(row["track_id"]), score=0.5, reasons=("sample",))
+            for row in rows
+        )
+
     def get_tracks(self, track_ids: Sequence[int]) -> tuple[StoredTrack, ...]:
         if not track_ids:
             return ()

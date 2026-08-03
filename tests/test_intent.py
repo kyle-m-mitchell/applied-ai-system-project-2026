@@ -35,10 +35,22 @@ def test_mood_detection(parser):
     assert parser.parse("something chill for the evening").mood == "chill"
 
 
-def test_vague_query_asks_for_clarification(parser):
-    intent = parser.parse("music")
+def test_empty_query_asks_for_clarification(parser):
+    intent = parser.parse("   ")
     assert intent.needs_clarification is True
     assert intent.clarification
+
+
+def test_vague_but_real_query_is_not_clarified(parser):
+    # A single real word is enough to attempt retrieval; the companion offers a
+    # best-effort set rather than the parser refusing up front.
+    intent = parser.parse("music")
+    assert intent.needs_clarification is False
+
+
+def test_open_request_is_recognized(parser):
+    assert parser.parse("surprise me").open_request is True
+    assert parser.parse("some jazz please").open_request is False
 
 
 def test_free_text_is_preserved_for_retrieval(parser):

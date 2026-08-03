@@ -4,8 +4,8 @@
 %% dotted arrows = dependency, testing, or observability.
 %% Phase 4's Streamlit UI, reversible session snapshots, feedback capture,
 %% evaluation report, JSONL receipt, and structured-preference hybrid now exist.
-%% Still planned here: feedback-informed ranking, real-dataset ingestion,
-%% provider structured intent, and launch infrastructure.
+%% Session-personalization (feedback-informed re-rank) and real FMA ingestion now
+%% exist. Still planned here: provider structured intent and launch infrastructure.
 
 flowchart TB
     subgraph RUNTIME["Runtime request and response"]
@@ -15,7 +15,7 @@ flowchart TB
         INPUT_GUARD["Input + privacy guard<br/>size · PII/secret redaction · injection · crisis safe-response"]
         AGENT["MusicCompanion — bounded agent<br/>intent parser (rule now, provider structured-intent planned)<br/>allowlisted actions + privacy-safe trace"]
         RETRIEVER["Retriever interface<br/>TF-IDF · context guides · Gemini embeddings · hybrid + provenance"]
-        RANKER["Hard filters + fusion + MMR diversity<br/>semantic · lexical · structured preference<br/>evaluated session-personalization signal (planned)"]
+        RANKER["Hard filters + fusion + MMR diversity<br/>semantic · lexical · structured preference<br/>session-personalization re-rank (session-only, bounded)"]
         EVALUATOR["Grounding evaluator<br/>ids · duplicates · constraints · evidence · count · framing grounding"]
         POLICY["Situation policy<br/>recommend · clarify · no-match · safe-response · degraded"]
         VOICE["Cadence voice<br/>deterministic baseline + optional Gemini selection<br/>from application-owned microcopy"]
@@ -44,15 +44,15 @@ flowchart TB
     subgraph GROUNDING["Grounding, provider, and session context"]
         direction LR
         CURATOR(["Human curator<br/>(launch review pending)"])
-        SOURCES[("Validated generated catalog + AI-drafted context guides<br/>(+ real-dataset ingestion, planned)")]
+        SOURCES[("Validated generated catalog + AI-drafted context guides<br/>+ real FMA dataset ingestion")]
         INDEX["Retrieval index<br/>TF-IDF (2 sources) + Gemini embeddings, committed cache<br/>semantic+lexical (+structured) hybrid"]
-        MEMORY[("Session-only state<br/>intent + reversible snapshots + rating now<br/>feedback-informed ranking planned")]
+        MEMORY[("Session-only state<br/>intent + reversible snapshots + rating<br/>session-learned taste (feedback → bounded re-rank)")]
         GEMINI["Gemini provider adapter (stdlib REST, optional)<br/>embeddings + approved Cadence-line selection<br/>structured intent planned · bounded fallback"]
 
         CURATOR -. "review gate" .-> SOURCES
         SOURCES --> INDEX
         INDEX --> RETRIEVER
-        MEMORY -->|"typed session intent now; feedback ranking planned"| AGENT
+        MEMORY -->|"typed session intent + feedback-informed re-rank"| AGENT
         GEMINI -. "AI capability" .-> APP
     end
 

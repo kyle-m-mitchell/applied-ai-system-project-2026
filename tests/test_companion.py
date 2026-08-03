@@ -78,11 +78,14 @@ def test_pii_is_redacted_and_kept_local(companion):
         "call me at 212-555-1212 qqq xyzzy",
     ),
 )
-def test_privacy_boilerplate_cannot_manufacture_music_relevance(companion, query):
+def test_privacy_boilerplate_yields_an_exploratory_set_not_manufactured_relevance(companion, query):
     result = companion.respond(query)
-    assert result.action is CompanionAction.NO_MATCH
-    assert result.retrieval.hits == ()
+    # PII + gibberish can never produce a *relevance* match; rather than refuse, it
+    # yields an honest, query-independent exploratory starting set.
+    assert result.action is CompanionAction.RECOMMEND
+    assert result.trace.fallback_reason == "exploratory"
     assert result.trace.guard_category is GuardCategory.SENSITIVE
+    assert "alice@example" not in result.message and "212-555-1212" not in result.message
 
 
 def test_injection_is_ignored_but_the_request_still_works(companion):
@@ -92,15 +95,42 @@ def test_injection_is_ignored_but_the_request_still_works(companion):
     assert result.retrieval.hits
 
 
-@pytest.mark.parametrize("text", ["", "music"])
-def test_vague_or_empty_asks_to_clarify(companion, text):
+@pytest.mark.parametrize("text", ["", "   "])
+def test_empty_input_asks_to_clarify(companion, text):
     assert companion.respond(text).action is CompanionAction.CLARIFY
 
 
-def test_no_lexical_or_semantic_match_reports_no_match(companion):
+def test_vague_input_gets_a_best_effort_set_instead_of_a_dead_end(companion):
+    result = companion.respond("music")
+    assert result.action is CompanionAction.RECOMMEND and result.retrieval.hits
+
+
+def test_session_feedback_changes_ordering_and_sessions_stay_isolated(companion):
+    from src.contracts import ExecutionPolicy, SessionPreference
+    from src.session_preference import apply_like
+
+    local = ExecutionPolicy(force_local=True)
+    base = companion.respond("something upbeat", policy=local)
+    base_ids = [hit.track.id for hit in base.retrieval.hits]
+
+    liked = max(base.retrieval.hits, key=lambda hit: hit.track.energy or 0.0).track
+    pref = apply_like(SessionPreference(), liked)
+    learned = companion.respond(
+        "something upbeat", policy=ExecutionPolicy(force_local=True, preference=pref)
+    )
+    assert [hit.track.id for hit in learned.retrieval.hits] != base_ids  # taste moved it
+
+    # A concurrent session carrying no preference is unaffected: the shared engine
+    # stores nothing, so one listener's feedback cannot leak into another's.
+    other = companion.respond("something upbeat", policy=local)
+    assert [hit.track.id for hit in other.retrieval.hits] == base_ids
+
+
+def test_no_match_falls_back_to_an_honest_exploratory_set(companion):
     result = companion.respond("xyzzy zzz qqq")
-    assert result.action is CompanionAction.NO_MATCH
-    assert result.retrieval.hits == ()
+    assert result.action is CompanionAction.RECOMMEND
+    assert result.trace.fallback_reason == "exploratory"
+    assert len(result.retrieval.hits) >= 1
 
 
 def test_response_carries_a_privacy_safe_trace(companion):
@@ -156,7 +186,7 @@ def test_signal_comparison_is_inert_without_a_structured_signal(companion):
 
 
 def test_clarify_and_safe_turns_have_no_comparison(companion):
-    assert companion.respond_detailed("music").comparison is None
+    assert companion.respond_detailed("   ").comparison is None
     assert companion.respond_detailed("i want to end my life").comparison is None
 
 

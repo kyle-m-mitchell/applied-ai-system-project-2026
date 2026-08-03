@@ -1,126 +1,62 @@
-# Project 4 Rubric Evidence Map
+# Rubric Evidence Map
 
-This map points from each grading criterion to code, an executable check, and an
-honest expected result. Run commands from the repository root. Optional provider
-tests use fakes; the normal suite does not require an API key or network.
+Each grading criterion → code, an executable check, and an honest expected result.
+Run commands from the repository root; the normal suite needs no API key or network
+(optional provider tests use fakes).
 
-## Required features — 21 points
+## Required features (21 pts)
 
-| Criterion | Evidence | How to verify | Expected evidence |
+| Criterion | Evidence | Verify | Expected |
 |---|---|---|---|
-| Base project and original scope (3) | [`README.md`](../README.md), [`src/recommender.py`](../src/recommender.py), [`src/main.py`](../src/main.py) | `python -m src.main` | Structured fictional taste profile → deterministic weighted top five. README identifies the original 20-track limitations and Phase 5 extension. |
-| Substantial integrated AI feature (3) | [`src/companion.py`](../src/companion.py), [`src/retrieval.py`](../src/retrieval.py), [`src/fma_store.py`](../src/fma_store.py), [`src/modeling.py`](../src/modeling.py), [`src/research.py`](../src/research.py), [`ui/`](../ui/) | `streamlit run streamlit_app.py`; submit `some jazz please`; inspect tests named below | Guarded language → catalog-aware retrieval/structured ranking → evaluator → Cadence response. Specialized predictions are baked into FMA artifacts; research is a per-result post-ranking action, not a detached demo. |
-| Mermaid architecture (3) | [`diagrams/architecture.mmd`](../diagrams/architecture.mmd) | Render the `.mmd` in Mermaid Live or `mmdc` | Source shows offline ETL/model path, FMA text + structured retrieval, fusion, evaluator/fallback, research/citation guard, annotation/human promotion, isolated DEAM, tests, and human review. |
-| Functional end-to-end demonstration (3) | [`streamlit_app.py`](../streamlit_app.py), [`ui/`](../ui/), [`src/main.py`](../src/main.py), examples below | Run the UI or three CLI examples | Same application pipeline returns recommend/clarify/no-match/safe/degraded states with evidence. Result IDs come from the selected catalog. |
-| Reliability/evaluation/guardrail (3) | [`src/guard.py`](../src/guard.py), [`src/evaluator.py`](../src/evaluator.py), [`src/catalog_artifacts.py`](../src/catalog_artifacts.py), [`src/observability.py`](../src/observability.py), [`scripts/evaluate.py`](../scripts/evaluate.py) | `python -m src.main --local-only --trace "my email is alice@example.com, find me melancholy piano"`; `python scripts/evaluate.py` | Email is redacted, provider use is blocked, local results remain; evaluator checks grounded IDs/evidence; corrupt artifacts fall back; report gate preserves the fictional `0.863` control. |
-| README/setup (3) | [`README.md`](../README.md), [`docs/PROJECT_HANDBOOK.md`](PROJECT_HANDBOOK.md), [`docs/CATALOG_DATA_CARD.md`](CATALOG_DATA_CARD.md), [`docs/LICENSING.md`](LICENSING.md) | Follow Quick start; `python -m pytest -q` | Installation, UI/CLI/test/build commands, sample behavior, architecture, data/model boundaries, and known pending release evidence are documented. |
-| Reflection on AI collaboration and design (3) | [`ai_interactions.md`](../ai_interactions.md), [`model_card.md`](../model_card.md) | Read Phase 5 action/observation/decision trace and reflection | Identifies prompts/uses, a helpful suggestion, flawed suggestions, fixes, limits, and future evidence gates. Owner should personalize before submission. |
+| Base project & original scope | [`src/recommender.py`](../src/recommender.py), [`src/main.py`](../src/main.py), [README](../README.md) | `python -m src.main --structured-demo` | structured fictional profile → deterministic weighted top-five (lofi/chill, per-feature "Why", `Operating mode: local`); README states the original 20-track limits and the extension |
+| Substantial integrated AI feature | [`companion`](../src/companion.py), [`retrieval`](../src/retrieval.py), [`fma_store`](../src/fma_store.py), [`modeling`](../src/modeling.py), [`research`](../src/research.py), [`ui/`](../ui/) | `streamlit run streamlit_app.py`; submit `some jazz please` | guarded language → catalog-aware retrieval + structured ranking → evaluator → response; predictions baked into FMA artifacts; research is a per-result post-ranking action |
+| Mermaid architecture (matches code) | [`diagrams/architecture.mmd`](../diagrams/architecture.mmd) | render in Mermaid Live or `mmdc` | offline ETL/model path, FMA text + structured retrieval, fusion, evaluator/fallback, research/citation guard, isolated DEAM, tests, human review |
+| End-to-end demonstration | [`streamlit_app.py`](../streamlit_app.py), [`ui/`](../ui/), [`src/main.py`](../src/main.py) | run the UI or the CLI examples below | one pipeline returns recommend/clarify/no-match/safe/degraded with evidence; ids come from the selected catalog |
+| Reliability / guardrail | [`guard`](../src/guard.py), [`evaluator`](../src/evaluator.py), [`catalog_artifacts`](../src/catalog_artifacts.py), [`observability`](../src/observability.py), [`evaluate.py`](../scripts/evaluate.py) | example 2 below; `python scripts/evaluate.py` | email redacted, provider blocked, local results remain; evaluator checks grounded ids/evidence; corrupt artifacts fall back; gate holds the fictional `0.863` control |
+| README & setup | [README](../README.md), [handbook](PROJECT_HANDBOOK.md), [data card](CATALOG_DATA_CARD.md), [licensing](LICENSING.md) | follow Quick start; `python -m pytest -q` | install/run/test/build commands, sample behavior, architecture, data/model boundaries, and pending release evidence documented |
+| AI-collaboration reflection | [`ai_interactions.md`](../ai_interactions.md), [`model_card.md`](../model_card.md) | read | prompting/uses, one useful + flawed suggestions, fixes, and limits *(owner personalizes before submission)* |
 
-## Stretch features — up to 8 points
+## Stretch features (up to 8 pts)
 
-| Bonus | Evidence | How to verify | Expected evidence |
+| Bonus | Evidence | Verify | Expected |
 |---|---|---|---|
-| Multi-source/custom RAG (+2) | [`src/retrieval.py`](../src/retrieval.py), [`data/context_guides/`](../data/context_guides/), [`src/fma_store.py`](../src/fma_store.py) | `python scripts/retrieval_demo.py "music to concentrate"`; run FMA store tests | Fictional catalog + guide expansion and FMA's independently generated FTS5 + structured candidates demonstrate custom/multi-source retrieval with provenance. Data card explains why retrieval improves sparse numeric discovery. |
-| Agentic workflow (+2) | [`src/companion.py`](../src/companion.py), [`src/research.py`](../src/research.py), [`ai_interactions.md`](../ai_interactions.md) | `python -m src.main --trace "upbeat party music"`; `python -m pytest tests/test_research.py -q` | Bounded recommendation actions and optional identity→grounded search→citation/fallback tool workflow. Trace logs observable steps/outcomes, never hidden chain-of-thought. |
-| Specialized behavior (+2) | [`src/modeling.py`](../src/modeling.py), [`src/mood.py`](../src/mood.py), [`src/voice.py`](../src/voice.py), [`model_card.md`](../model_card.md) | `python -m pytest tests/test_modeling.py tests/test_mood.py -q`; inspect a generated real model report when available | Artist-split target models compare against Dummy/Ridge, quantify uncertainty, release or abstain, and feed a separate experimental mood profile. Model card states that real metrics are pending until a pinned build. |
-| Evaluation harness (+2) | [`scripts/evaluate.py`](../scripts/evaluate.py), [`eval/cases.json`](../eval/cases.json), [`src/evaluation.py`](../src/evaluation.py), Phase 5 tests | `python scripts/evaluate.py`; `python -m pytest -q` | Scenario matrix prints a pass/fail summary; specialized tests cover unknowns, deterministic ETL, SQLite/resolver, model gates, mood, annotation, and guarded research. |
+| Multi-source RAG (+2) | [`retrieval`](../src/retrieval.py), [`data/context_guides/`](../data/context_guides/), [`fma_store`](../src/fma_store.py) | `python scripts/retrieval_demo.py "music to concentrate"` | fictional catalog + guide expansion, and FMA's independent FTS5 + structured candidates, with provenance |
+| Agentic workflow (+2) | [`companion`](../src/companion.py), [`research`](../src/research.py) | `python -m src.main --trace "upbeat party music"`; `pytest tests/test_research.py -q` | bounded actions + an identity→grounded-search→citation/fallback tool workflow; the trace logs steps/outcomes, never hidden reasoning |
+| Specialized behavior (+2) | [`modeling`](../src/modeling.py), [`mood`](../src/mood.py), [`voice`](../src/voice.py), [`model_card.md`](../model_card.md) | `pytest tests/test_modeling.py tests/test_mood.py -q` | artist-split models vs. Dummy/Ridge, uncertainty, release-or-abstain, feeding an experimental mood profile (real metrics pending a pinned build) |
+| Evaluation harness (+2) | [`evaluate.py`](../scripts/evaluate.py), [`eval/cases.json`](../eval/cases.json), [`evaluation.py`](../src/evaluation.py) | `python scripts/evaluate.py`; `python -m pytest -q` | scenario-matrix pass/fail gate + metrics; results store no query text |
 
-## Three end-to-end examples
-
-### 1. Ordinary recommendation
+## Reproducible examples
 
 ```bash
-python -m src.main "some jazz please"
+# 1 — ordinary recommendation. The default catalog is FMA (real artists); the
+#     fictional control gives deterministic, stable output:
+python -m src.main --catalog fictional "some jazz please"
+#   → After Midnight Set — East Ferry Trio [jazz · romantic] …
+
+# 2 — privacy guard: a sensitive query is auto-forced local; the raw email must not
+#     appear in output, receipts, or JSONL events
+python -m src.main --trace "my email is alice@example.com, find me melancholy piano"
+#   → "my email is [redacted], find me melancholy piano" · guard_category=sensitive · network_used=False
+
+# 3 — unsupported FMA hard capability (in the UI, FMA catalog): "clean instrumental music"
+#   → Cadence clarifies rather than guessing a clean/instrumental boolean FMA cannot prove.
+#     ("more instrumental" remains a soft preference where a trustworthy value exists.)
 ```
 
-Representative output:
-
-```text
-Here are a few picks for that:
-1. After Midnight Set — East Ferry Trio [jazz · romantic]
-2. Coffee Shop Stories — Slow Stereo [jazz · relaxed]
-...
-[degraded] · mode: degraded · voice: template
-```
-
-Without a live provider, `degraded` is an honest capability label, not a failure to
-recommend.
-
-### 2. Privacy guard and local fallback
+## Verify everything
 
 ```bash
-python -m src.main --local-only --trace \
-  "my email is alice@example.com, find me melancholy piano"
+python -m pytest --collect-only -q   # the test count is generated, never hand-typed here
+python -m pytest -q                   # full offline suite
+python scripts/evaluate.py            # gate PASS; fictional control 0.863
 ```
 
-Expected behavior:
+## Pending before a launch claim (not implied by unit tests)
 
-```text
-You asked: "my email is [redacted], find me melancholy piano"
-... grounded local recommendations ...
-trace: guard_category=sensitive ... network_used=False ...
-```
-
-The exact raw email must not appear in output, receipts, or JSONL events.
-
-### 3. Unsupported FMA hard capability
-
-In the UI, select the FMA catalog and ask:
-
-```text
-clean instrumental music for focus
-```
-
-Expected behavior:
-
-```text
-I can't verify clean lyrics or an instrumental-only boolean in this catalog,
-and I'd rather not guess. Remove that requirement or switch catalogs.
-```
-
-“More instrumental” may remain a soft preference when a trustworthy
-instrumentalness number exists.
-
-## Phase 5 focused verification
-
-```bash
-python -m pytest \
-  tests/test_phase5_contracts.py \
-  tests/test_phase5_companion.py \
-  tests/test_fma_catalog_subsystem.py \
-  tests/test_modeling.py \
-  tests/test_mood.py \
-  tests/test_annotation.py \
-  tests/test_research.py -q
-```
-
-Run the full suite and generated evaluation report:
-
-```bash
-python -m pytest --collect-only -q
-python -m pytest -q
-python scripts/evaluate.py
-```
-
-Test count is deliberately generated, not copied into this file. The accepted
-fictional evaluation control is `0.863` average genre satisfaction.
-
-## Evidence that remains pending before a launch claim
-
-The rubric can be demonstrated with the integrated code and fixture-backed tests,
-but the larger Phase 5 product plan requires real-build evidence that must not be
-fabricated:
-
-- actual FMA accepted/quarantined counts and field coverage;
-- generated target-by-target MAE, R², interval, retained-coverage, and release
-  decisions;
-- committed verified 300-track Lite database and manifest;
-- published checksummed Full release asset;
-- deterministic rebuild comparison and corrupt-release fallback smoke test;
-- measured p95/open-time/memory/size/download report on a named machine;
-- 300 primary + 60 independent human mood labels and a documented promotion
-  decision;
-- connected-browser accessibility and hosted deployment review.
-
-Those are visible checklist items in the project handbook, not implied by unit
-tests.
+The rubric is demonstrable from the integrated code and fixture-backed tests, but the
+larger product plan still needs *generated* real-build evidence: actual FMA
+accepted/quarantined counts and coverage; per-target model metrics and release
+decisions; a published, checksummed Full release with a deterministic-rebuild and
+corrupt-asset fallback check; measured runtime performance on a named machine; 300
+primary + 60 audit human mood labels with a documented promotion decision; and an
+accessibility/deployment review. These are tracked in the project handbook.

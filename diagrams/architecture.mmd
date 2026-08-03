@@ -40,7 +40,7 @@ flowchart TB
         direction LR
         HUMAN([Listener])
         SURFACE["Streamlit or CLI<br/>catalog-aware controls and cards"]
-        SESSION[(Per-browser session<br/>mix history · undo · ratings<br/>research cache)]
+        SESSION[(Per-browser session<br/>mix history · undo · ratings<br/>session-learned taste · research cache)]
         GUARD["Input and privacy guard<br/>validation · redaction<br/>injection and crisis routes"]
         INTENT["Typed intent parser<br/>bounded action policy"]
         CAPABILITY["Catalog capability validation<br/>clarify unsupported hard filters"]
@@ -65,7 +65,7 @@ flowchart TB
         STRUCT["Structured retriever<br/>top 200<br/>genre and trustworthy numeric axes"]
         RRF["Weighted reciprocal-rank fusion<br/>union of both candidate sets"]
         CONF["Confidence-aware scoring<br/>missing = no reward or penalty<br/>estimate weight follows confidence"]
-        MMR["MMR diversity<br/>unknown moods never match"]
+        MMR["Session-taste re-rank (bounded, session-only)<br/>then MMR diversity<br/>unknown moods never match"]
 
         RESOLVER --> ROSQL
         ROSQL --> TEXT
@@ -80,7 +80,7 @@ flowchart TB
         FCAT[(200-track fictional catalog<br/>authored complete fields)]
         GUIDES[(Versioned context guides)]
         TFIDF["Existing TF-IDF and cached/live<br/>embedding hybrid"]
-        FRANK["Existing structured fusion and MMR<br/>ranking behavior preserved"]
+        FRANK["Existing structured fusion + session-taste re-rank + MMR<br/>text-only ranking behavior preserved"]
 
         FCAT --> TFIDF
         GUIDES --> TFIDF
@@ -97,9 +97,9 @@ flowchart TB
         direction LR
         RESEARCH_BUTTON(["Human selects Research this track"])
         IDENTITY["MusicBrainz exact identity resolver<br/>title + artist only<br/>User-Agent and rate limit"]
-        GROUNDED["Optional Gemini grounded search<br/>resolved identity only"]
-        CITATION["Citation and content guard<br/>identity ambiguity · unsafe URL<br/>missing support · injection · size · timeout"]
-        BRIEF["At most three cited claims<br/>session-only ResearchBrief"]
+        GROUNDED["Optional Gemini grounded search<br/>resolved identity only<br/>writes a grounded creative narrative"]
+        CITATION["Citation and content guard<br/>identity ambiguity · unsafe URL<br/>missing support · injection · size · timeout<br/>narrative withheld if it quotes an unsourced name"]
+        BRIEF["Grounded narrative + ≤ 3 cited claims<br/>session-only ResearchBrief · never catalog truth"]
         LOCAL_SUMMARY["Deterministic local FMA summary"]
 
         SURFACE -.-> RESEARCH_BUTTON --> IDENTITY

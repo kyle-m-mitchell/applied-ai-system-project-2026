@@ -236,6 +236,16 @@ class FmaRetriever(Retriever):
             fusion=False,
         )
 
+    def sample_diverse(self, k: int = 5) -> RetrievalResult:
+        """A deterministic genre-spread starting set for an unmatched request."""
+        if k < 1:
+            raise ValueError("k must be at least 1")
+        sample = self.store.sample_diverse(k)
+        ranked = tuple((hit.track_id, hit.score) for hit in sample)
+        return self._result(
+            "", ranked, text_hits=(), structured_hits=(), k=k, fusion=False
+        )
+
     def search_with_intent(self, intent: MusicIntent, *, k: int | None = None) -> RetrievalResult:
         """Union independent FTS/structured pools and fuse their ranks with RRF."""
         limit = intent.limit if k is None else k

@@ -282,7 +282,8 @@ class ResearchStatus(str, Enum):
     """Bounded outcomes of optional post-ranking research."""
 
     NOT_REQUESTED = "not_requested"
-    PUBLISHED = "published"
+    PUBLISHED = "published"  # grounded web research with validated citations
+    CATALOG_NOTE = "catalog_note"  # non-grounded note from the track's own catalog facts
     NO_MATCH = "no_match"
     AMBIGUOUS = "ambiguous"
     UNAVAILABLE = "unavailable"
@@ -341,6 +342,7 @@ class ResearchBrief(ContractModel):
     track_ref: TrackRef
     status: ResearchStatus
     identity_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    narrative: str | None = Field(default=None, min_length=1, max_length=1200)
     claims: tuple[ResearchClaim, ...] = Field(default=(), max_length=3)
     citations: tuple[ResearchCitation, ...] = Field(default=(), max_length=9)
     source_domains: tuple[str, ...] = ()
@@ -375,6 +377,8 @@ class ResearchBrief(ContractModel):
             raise ValueError("source_domains must match citation source domains")
         if self.status is ResearchStatus.PUBLISHED and (not self.claims or not self.citations):
             raise ValueError("published research requires claims and citations")
+        if self.status is ResearchStatus.CATALOG_NOTE and not self.narrative:
+            raise ValueError("a catalog note requires a narrative")
         return self
 
 
@@ -867,6 +871,7 @@ class MusicIntent(ContractModel):
     instrumental_only: bool = False
     exclude_explicit: bool = False
     feature_goals: tuple[FeatureGoal, ...] = ()
+    open_request: bool = False  # "surprise me" / "anything" — invite a varied set
     limit: int = Field(default=5, ge=1, le=20)
     needs_clarification: bool = False
     clarification: str | None = None
@@ -884,6 +889,50 @@ class MusicIntent(ContractModel):
         if len(features) != len(set(features)):
             raise ValueError("feature_goals must contain at most one goal per feature")
         return self
+
+
+class FeatureVector(ContractModel):
+    """A liked track's real audio-feature fingerprint, for session exemplar pull."""
+
+    energy: float | None = Field(default=None, ge=0.0, le=1.0)
+    valence: float | None = Field(default=None, ge=0.0, le=1.0)
+    danceability: float | None = Field(default=None, ge=0.0, le=1.0)
+    acousticness: float | None = Field(default=None, ge=0.0, le=1.0)
+    instrumentalness: float | None = Field(default=None, ge=0.0, le=1.0)
+    genre: str | None = Field(default=None, max_length=80)
+
+
+class SessionPreference(ContractModel):
+    """Session-only, reversible taste signal accumulated from listener feedback.
+
+    Bounded so it only *nudges* ranking, never overriding a named intent. It is
+    never stored on the shared companion — it rides on ``ExecutionPolicy`` per
+    call and lives only in one browser session's state, so two sessions cannot
+    influence each other. ``suppressed_ids`` is a soft session demotion (a
+    reversible "not right now"), never a permanent ban. ``enabled=False`` is the
+    listener's "don't learn" switch.
+    """
+
+    feature_bias: dict[str, float] = Field(default_factory=dict)
+    genre_bias: dict[str, float] = Field(default_factory=dict)
+    exemplars: tuple[FeatureVector, ...] = ()
+    suppressed_ids: tuple[int, ...] = ()
+    enabled: bool = True
+
+    @field_validator("feature_bias", "genre_bias")
+    @classmethod
+    def bounded_bias(cls, value: dict[str, float]) -> dict[str, float]:
+        """Bias magnitudes stay in [-1, 1] so learning can only ever nudge."""
+        if any(not (-1.0 <= weight <= 1.0) for weight in value.values()):
+            raise ValueError("session bias weights must be within [-1, 1]")
+        return value
+
+    @property
+    def is_active(self) -> bool:
+        """True when learning is on and some signal has actually accumulated."""
+        return self.enabled and bool(
+            self.feature_bias or self.genre_bias or self.exemplars or self.suppressed_ids
+        )
 
 
 class DiversityLevel(str, Enum):
@@ -909,6 +958,7 @@ class ExecutionPolicy(ContractModel):
 
     force_local: bool = False
     diversity: DiversityLevel = DiversityLevel.BALANCED
+    preference: SessionPreference | None = None
 
 
 class CompanionAction(str, Enum):

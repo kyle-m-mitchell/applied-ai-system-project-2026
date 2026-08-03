@@ -1,12 +1,15 @@
-"""Command line runner for the Music Recommender Simulation.
+"""Command line runner for Cadence.
 
-Two entry points share the one validated catalog:
-
-- no argument      -> the original structured-preference scorer (unchanged);
-- a quoted phrase  -> the natural-language companion
-                      (guard -> intent -> retrieval), e.g.::
+- ``--structured-demo``   -> the original deterministic structured-preference
+                             scorer over the fictional catalog (unchanged);
+- a quoted phrase         -> the natural-language companion (guard -> intent ->
+                             retrieval -> ranking), e.g.::
 
       python -m src.main "clean chill beats for studying, no vocals"
+
+  The companion uses the FMA catalog by default; add ``--catalog fictional`` for
+  the regression control. Other flags: ``--trace``, ``--local-only``, ``--log``.
+  With no arguments, a default companion query runs on the FMA catalog.
 """
 
 from __future__ import annotations

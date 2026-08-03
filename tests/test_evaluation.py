@@ -51,8 +51,8 @@ def test_results_never_contain_raw_query_text(catalog, guides):
 
 def test_known_case_outcomes(catalog, guides):
     companion = build_scenario_companion("local_tfidf", catalog, guides)
-    gibberish = run_case(companion, _case("gibberish_no_match"), "local_tfidf")
-    assert gibberish["action"] == "no_match" and gibberish["passed"]
+    gibberish = run_case(companion, _case("gibberish_best_effort"), "local_tfidf")
+    assert gibberish["action"] == "recommend" and gibberish["passed"]
     lofi = run_case(companion, _case("clean_instrumental_lofi"), "local_tfidf")
     assert lofi["action"] == "recommend"
     assert lofi["hard_constraint_ok"] is True and lofi["passed"]
@@ -69,7 +69,7 @@ def test_fake_hybrid_is_graded_as_plumbing(catalog, guides):
     # Under fake_hybrid the gibberish case "recommends" noise; that must not fail,
     # because plumbing scenarios aren't graded on semantic quality.
     companion = build_scenario_companion("fake_hybrid", catalog, guides)
-    result = run_case(companion, _case("gibberish_no_match"), "fake_hybrid")
+    result = run_case(companion, _case("gibberish_best_effort"), "fake_hybrid")
     assert result["passed"]
 
 
